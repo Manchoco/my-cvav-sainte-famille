@@ -5,6 +5,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 
 import 'config.dart';
+import 'screens/common/system_screens.dart';
 import 'screens/common/welcome_screen.dart';
 import 'screens/parent/parent_shell.dart';
 import 'screens/responsable/responsable_shell.dart';
@@ -42,21 +43,55 @@ class MyCvavApp extends StatelessWidget {
   }
 }
 
-/// Aiguillage selon la session : accueil, espace responsable ou espace parent.
-class RootGate extends StatelessWidget {
+/// Aiguillage : mise à jour obligatoire, maintenance, connexion, mot de passe provisoire, puis espace selon le rôle.
+class RootGate extends StatefulWidget {
   const RootGate({super.key});
+
+  @override
+  State<RootGate> createState() => _RootGateState();
+}
+
+class _RootGateState extends State<RootGate> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Au retour dans l'application : maintenance et mises à jour publiées entre-temps.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) context.read<Session>().refreshStatus();
+  }
 
   @override
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
     if (!session.ready) return const SplashScreen();
     final user = session.user;
-    final Widget child = user == null
-        ? const WelcomeScreen()
-        : user.isResponsable
-            ? const ResponsableShell()
-            : const ParentShell();
-    return AnimatedSwitcher(duration: const Duration(milliseconds: 300), child: KeyedSubtree(key: ValueKey(user?.role), child: child));
+    final String key;
+    final Widget child;
+    if (session.status.updateRequired) {
+      (key, child) = ('update', const UpdateRequiredScreen());
+    } else if (session.blockedByMaintenance) {
+      (key, child) = ('maintenance', const MaintenanceScreen());
+    } else if (user == null) {
+      (key, child) = ('welcome', const WelcomeScreen());
+    } else if (user.mustChangePassword) {
+      (key, child) = ('password', const ForcePasswordChangeScreen());
+    } else {
+      (key, child) = (user.role, user.isResponsable ? const ResponsableShell() : const ParentShell());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) offerOptionalUpdate(context);
+      });
+    }
+    return AnimatedSwitcher(duration: const Duration(milliseconds: 300), child: KeyedSubtree(key: ValueKey(key), child: child));
   }
 }
 

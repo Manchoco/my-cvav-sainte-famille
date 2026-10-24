@@ -6,6 +6,7 @@ import { LEGIONS, generateLinkCode, normalizePhone } from '../domain.js';
 import { badRequest, notFound, parseBody, parseId } from '../errors.js';
 import { childDto, insertChild } from '../services/children.js';
 import { parseChildrenDocument } from '../services/importer.js';
+import { audit } from '../services/audit.js';
 
 const router = Router();
 
@@ -44,7 +45,9 @@ router.get('/', async (req, res) => {
     where.push(`c.legion = $${params.length}`);
   }
   if (req.query.q) {
-    params.push(`%${String(req.query.q).trim().toLowerCase()}%`);
+    // Les jokers LIKE saisis par l'utilisateur (% et _) sont échappés.
+    const q = String(req.query.q).trim().toLowerCase().slice(0, 100).replace(/[\\%_]/g, (c) => `\\${c}`);
+    params.push(`%${q}%`);
     where.push(`(lower(c.last_name || ' ' || c.first_name) LIKE $${params.length} OR c.parent_phone LIKE $${params.length})`);
   }
   const sql = `${SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY lower(c.last_name), lower(c.first_name)`;
@@ -78,8 +81,10 @@ router.put('/:id', async (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
-  const { rowCount } = await query('DELETE FROM children WHERE id = $1', [parseId(req.params.id)]);
-  if (!rowCount) throw notFound('Enfant introuvable');
+  const id = parseId(req.params.id);
+  const { rows } = await query('DELETE FROM children WHERE id = $1 RETURNING last_name, first_name', [id]);
+  if (!rows[0]) throw notFound('Enfant introuvable');
+  await audit(req, 'child.delete', `child:${id}`, { name: `${rows[0].last_name} ${rows[0].first_name}` });
   res.status(204).end();
 });
 
@@ -92,6 +97,7 @@ router.post('/:id/regenerate-code', async (req, res) => {
     return rows[0];
   });
   if (!row) throw notFound('Enfant introuvable');
+  await audit(req, 'child.regenerate_code', `child:${id}`);
   res.json({ child: childDto(row) });
 });
 

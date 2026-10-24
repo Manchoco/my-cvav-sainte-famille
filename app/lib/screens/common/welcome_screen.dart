@@ -28,7 +28,7 @@ class WelcomeScreen extends StatelessWidget {
             children: [
               Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 GestureDetector(
-                  onLongPress: () => showServerSettings(context),
+                  onLongPress: AppConfig.canChangeServer ? () => showServerSettings(context) : null,
                   child: Image.asset('assets/images/logo_cvav.png', height: 96),
                 ),
                 const SizedBox(width: 16),

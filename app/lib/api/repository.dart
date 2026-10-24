@@ -79,6 +79,42 @@ class Repo {
         'entries': [for (final e in changes.entries) {'childId': e.key, 'paid': e.value}],
       });
 
+  // ----- Administration -----
+  static Future<Map<String, dynamic>> adminOverview() async => (await _api.get('/admin/overview')) as Map<String, dynamic>;
+
+  static Future<List<AdminUser>> adminUsers({String? role, String? q}) async {
+    final res = await _api.get('/admin/users', query: {'role': role, 'q': q});
+    return (res['users'] as List).map((j) => AdminUser.fromJson(j as Map<String, dynamic>)).toList();
+  }
+
+  static Future<(AdminUser, String)> adminCreateUser({required String role, required String fullName, required String phone, Legion? legion}) async {
+    final res = await _api.post('/admin/users', {'role': role, 'fullName': fullName, 'phone': phone, 'legion': legion?.name});
+    return (AdminUser.fromJson(res['user'] as Map<String, dynamic>), res['temporaryPassword'] as String);
+  }
+
+  static Future<AdminUser> adminUpdateUser(int id, Map<String, dynamic> data) async =>
+      AdminUser.fromJson((await _api.patch('/admin/users/$id', data))['user'] as Map<String, dynamic>);
+
+  static Future<String> adminResetPassword(int id) async =>
+      (await _api.post('/admin/users/$id/reset-password'))['temporaryPassword'] as String;
+
+  static Future<void> adminLogoutUser(int id) => _api.post('/admin/users/$id/logout');
+  static Future<void> adminDeleteUser(int id) => _api.delete('/admin/users/$id');
+
+  static Future<Map<String, dynamic>> adminSettings() async => (await _api.get('/admin/settings')) as Map<String, dynamic>;
+
+  static Future<void> adminSetMaintenance(bool enabled, String message) =>
+      _api.put('/admin/settings/maintenance', {'enabled': enabled, 'message': message});
+
+  static Future<void> adminSetAppUpdate({required int latestBuild, required int minBuild, required String url, required String notes}) =>
+      _api.put('/admin/settings/app-update', {'latestBuild': latestBuild, 'minBuild': minBuild, 'url': url, 'notes': notes});
+
+  static Future<String> adminRotateSignupCode() async =>
+      (await _api.post('/admin/settings/signup-code'))['signupCode'] as String;
+
+  static Future<List<Map<String, dynamic>>> adminAudit() async =>
+      ((await _api.get('/admin/audit', query: {'limit': '200'}))['entries'] as List).cast<Map<String, dynamic>>();
+
   // ----- Informations -----
   static Future<List<Post>> posts() async {
     final res = await _api.get('/posts');

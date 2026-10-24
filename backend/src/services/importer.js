@@ -2,6 +2,7 @@
 // Le résultat est un aperçu : rien n'est enregistré tant que le responsable n'a pas validé.
 import ExcelJS from 'exceljs';
 import mammoth from 'mammoth';
+import JSZip from 'jszip';
 import { LEGIONS, legionForAge, normalizePhone } from '../domain.js';
 
 const strip = (s) => String(s ?? '')
@@ -160,8 +161,32 @@ function rowsFromText(buffer) {
   return text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map(splitLine);
 }
 
+// Protection « bombe zip » : un .docx/.xlsx de 4 Mo peut se décompresser en plusieurs Go et saturer le serveur.
+const MAX_UNZIPPED_BYTES = 40 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 2000;
+
+async function assertSafeZip(buffer) {
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(buffer);
+  } catch {
+    const err = new Error("Document illisible : le fichier n'est pas un document Word ou Excel valide.");
+    err.status = 400;
+    throw err;
+  }
+  const entries = Object.values(zip.files);
+  // eslint-disable-next-line no-underscore-dangle
+  const total = entries.reduce((sum, f) => sum + (f._data?.uncompressedSize || 0), 0);
+  if (entries.length > MAX_ZIP_ENTRIES || total > MAX_UNZIPPED_BYTES) {
+    const err = new Error('Document trop volumineux une fois décompressé.');
+    err.status = 413;
+    throw err;
+  }
+}
+
 export async function extractRows(buffer, filename, mimetype = '') {
   const ext = (filename.split('.').pop() || '').toLowerCase();
+  if (['xlsx', 'docx'].includes(ext) || mimetype.includes('openxmlformats')) await assertSafeZip(buffer);
   if (ext === 'xlsx' || mimetype.includes('spreadsheetml')) return rowsFromXlsx(buffer);
   if (ext === 'docx' || mimetype.includes('wordprocessingml')) return rowsFromDocx(buffer);
   if (ext === 'pdf' || mimetype === 'application/pdf') return rowsFromPdf(buffer);

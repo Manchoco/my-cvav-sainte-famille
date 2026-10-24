@@ -17,8 +17,10 @@ visent à limiter qui peut voir quoi.
 - Mots de passe hachés avec **bcrypt** (8 caractères minimum).
 - **JWT HS256** (7 jours) avec `token_version` : changer de mot de passe ou « déconnecter tous les appareils » invalide
   immédiatement les anciens jetons. `JWT_SECRET` obligatoire (≥ 32 caractères) en production.
-- **Blocage 15 min après 5 échecs** de connexion, limitation de débit sur l'authentification, réponse en temps
-  constant que le numéro existe ou non.
+- **Blocage 15 min après 5 échecs** de connexion, réponse en temps constant que le numéro existe ou non.
+- Limitation de débit : 100 requêtes d'authentification / 15 min par adresse IP (beaucoup de parents partagent la
+  même IP derrière l'opérateur mobile) **et** 10 / 15 min par numéro de téléphone visé.
+- Comptes désactivés ou supprimés : jetons refusés immédiatement (vérification en base à chaque requête).
 - Jeton stocké dans le **Keystore Android** (`flutter_secure_storage`), sauvegarde Android désactivée (`allowBackup=false`).
 
 ## Mot de passe oublié
@@ -40,10 +42,47 @@ visent à limiter qui peut voir quoi.
   vérification du montant et de la session. Un paiement confirmé par Wave ne peut pas être décoché par erreur.
 - Mode lien marchand : le parent ne peut que **déclarer** (« à confirmer ») ; un responsable valide.
 
+## Administration et maintenance
+- Rôle `admin` distinct, impossible à obtenir par l'inscription (champ `role` ignoré, testé).
+- Comptes créés par l'admin : mot de passe provisoire aléatoire, **changement obligatoire** à la première connexion
+  (toutes les autres routes répondent 403 tant qu'il n'est pas changé).
+- Le dernier administrateur ne peut être ni supprimé, ni désactivé, ni rétrogradé. Changer un rôle ou désactiver un
+  compte déconnecte tous ses appareils.
+- Les actions sensibles (comptes, réglages, suppression d'enfant, nouveau code enfant) sont inscrites au journal.
+- Lien de mise à jour : `https://` uniquement.
+
+## Tests d'intrusion (`backend/test/security.test.js`, 27 scénarios, OWASP API Top 10)
+| Catégorie | Attaques testées | Résultat |
+|---|---|---|
+| Injection SQL | `' OR 1=1--`, `UNION SELECT`, `; DROP TABLE`, dans recherche, identifiants, légion, année, connexion, code enfant ; injection de second ordre | Bloquées (requêtes paramétrées, validation) |
+| Injection NoSQL / pollution de prototype | `{"$ne":null}`, `__proto__`, `constructor.prototype` | Rejetées (400) |
+| XSS stockée | `<script>`, `<img onerror>` dans noms et informations | Stockées comme texte, servies en JSON `nosniff` |
+| JWT | `alg: none`, signature forgée, HS512, jeton expiré, `sub` invalide | Refusés (401) |
+| Accès aux données d'autrui (BOLA/IDOR) | Parent lisant un enfant non rattaché, parent sur routes responsable | Refusés (403/404) |
+| Élévation de privilèges | `role: admin` à l'inscription, responsable sur `/admin`, assignation de masse | Refusées |
+| Force brute | Mots de passe, codes SMS, codes enfant, en-tête `X-Forwarded-For` falsifié | Limités (429 / blocage) |
+| Déni de service | JSON géant, fichier > 4 Mo, **bombe ZIP** (docx/xlsx), ReDoS | Refusés (413 / 400) |
+| Paiement | Webhook Wave non signé, rejeu, double paiement, montant modifié | Refusés |
+| Fuites | Empreintes de mots de passe, code enfant côté parent, traces d'erreurs, énumération des numéros | Aucune fuite |
+
+### Failles trouvées et corrigées pendant l'audit
+1. **Plantage serveur (500)** si le téléphone envoyé n'était pas une chaîne (`{"toString":1}`) → contrôle de type.
+2. **Limitation trop large et contournable** : une seule limite par IP bloquait tous les parents d'un même opérateur
+   et ne protégeait pas un compte visé depuis plusieurs IP → limite par IP + par numéro.
+3. **`X-Forwarded-For` falsifiable** : l'adresse IP n'était pas fiable derrière un proxy → `trust proxy` réglé sur
+   l'hébergeur uniquement (Vercel).
+4. **Bombe ZIP** : un `.docx` de 4 Mo pouvait se décompresser en plusieurs Go → contrôle de la taille décompressée
+   (40 Mo) et du nombre de fichiers avant lecture.
+5. **Recherche** : `%` et `_` interprétés comme jokers (contournement de filtre, requêtes lentes) → échappés.
+6. **Clé des codes SMS** identique au secret des jetons → clé dérivée (HKDF).
+7. **Comptes responsables impossibles à révoquer** → désactivation / suppression depuis l'administration.
+8. **Signature de l'APK** : clé de test publique → clé définitive chiffrée dans le dépôt (secret GitHub).
+9. Dépendances : versions figées, `npm audit` = 0 vulnérabilité.
+
 ## Points à traiter avant la mise en production
 - **Fournisseur SMS** à configurer (Orange SMS API ou Twilio) pour activer « Mot de passe oublié ».
-- **Gestion des responsables** : tous les responsables ont les mêmes droits ; il n'y a pas d'écran pour révoquer un
-  compte (à faire en base : `DELETE FROM users WHERE ...`).
+- Sur Vercel, les compteurs de débit sont propres à chaque instance : le blocage de compte (en base) reste la
+  protection principale. Contrepartie connue : un attaquant peut bloquer un compte 15 min en se trompant 5 fois.
 - **Sauvegardes** de la base à planifier chez l'hébergeur.
 - **Consentement** : informer les parents de la collecte de ces données (loi ivoirienne n° 2013-450 sur les données
   personnelles, ARTCI).

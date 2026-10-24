@@ -7,7 +7,8 @@ import { config } from '../config.js';
 import { query, withTransaction } from '../db.js';
 import { LEGIONS, normalizePhone } from '../domain.js';
 import { HttpError, badRequest, parseBody } from '../errors.js';
-import { authenticate, signToken } from '../middleware/auth.js';
+import { MaintenanceError, authenticate, signToken } from '../middleware/auth.js';
+import { getSettings } from '../services/settings.js';
 import { sendSms, smsProvider } from '../services/sms.js';
 
 const router = Router();
@@ -16,12 +17,25 @@ const LOCK_MINUTES = 15;
 // Hash factice pour que le temps de réponse ne révèle pas si un numéro existe.
 const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing', 10);
 
+// Par adresse IP : volontairement large, car de nombreux abonnés mobiles (et le Wi-Fi d'une paroisse)
+// partagent la même adresse publique.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 30,
+  limit: 100,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Trop de tentatives, réessayez dans quelques minutes' },
+});
+
+// Par numéro visé : freine le forçage d'un compte précis, quelle que soit l'adresse de l'attaquant.
+const perPhoneLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: (req) => !normalizePhone(req.body?.phone), // numéro invalide : refusé ensuite par la validation
+  keyGenerator: (req) => `phone:${normalizePhone(req.body?.phone)}`,
+  message: { error: 'Trop de tentatives pour ce numéro, réessayez dans quelques minutes' },
 });
 
 const phoneSchema = z.string().transform((v, ctx) => {
@@ -46,16 +60,27 @@ function safeEqual(a, b) {
 }
 
 export function publicUser(u) {
-  return { id: u.id, role: u.role, fullName: u.full_name, phone: u.phone, legion: u.legion };
+  return {
+    id: u.id, role: u.role, fullName: u.full_name, phone: u.phone, legion: u.legion,
+    mustChangePassword: Boolean(u.must_change_password),
+  };
+}
+
+async function assertNotInMaintenance(user) {
+  if (user?.role === 'admin') return;
+  const { maintenance } = await getSettings();
+  if (maintenance.enabled) throw new MaintenanceError(maintenance.message);
 }
 
 router.post('/register', authLimiter, async (req, res) => {
   const data = parseBody(registerSchema, req.body);
+  await assertNotInMaintenance(null);
   if (data.role === 'responsable') {
-    if (!config.responsableSignupCode) {
+    const { signupCode } = await getSettings();
+    if (!signupCode) {
       throw new HttpError(403, "L'inscription des responsables n'est pas encore ouverte. Contactez l'aumônerie.");
     }
-    if (!data.signupCode || !safeEqual(data.signupCode.trim(), config.responsableSignupCode)) {
+    if (!data.signupCode || !safeEqual(data.signupCode.trim(), signupCode)) {
       throw new HttpError(403, "Code d'accès responsable incorrect");
     }
   }
@@ -76,7 +101,7 @@ router.post('/register', authLimiter, async (req, res) => {
 
 const loginSchema = z.object({ phone: z.string(), password: z.string().min(1).max(128) });
 
-router.post('/login', authLimiter, async (req, res) => {
+router.post('/login', authLimiter, perPhoneLimiter, async (req, res) => {
   const { phone: rawPhone, password } = parseBody(loginSchema, req.body);
   const phone = normalizePhone(rawPhone);
   const { rows } = phone ? await query('SELECT * FROM users WHERE phone = $1', [phone]) : { rows: [] };
@@ -96,12 +121,39 @@ router.post('/login', authLimiter, async (req, res) => {
     }
     throw new HttpError(401, 'Numéro ou mot de passe incorrect');
   }
-  await query('UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1', [user.id]);
+  if (user.disabled) throw new HttpError(403, "Ce compte a été désactivé. Contactez l'administrateur.");
+  await assertNotInMaintenance(user);
+  await query('UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = now() WHERE id = $1', [user.id]);
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
 router.get('/me', authenticate, (req, res) => {
   res.json({ user: publicUser(req.user) });
+});
+
+const profileSchema = z.object({
+  fullName: z.string().trim().min(2, 'Nom trop court').max(120).optional(),
+  phone: phoneSchema.optional(),
+  currentPassword: z.string().min(1, 'Mot de passe actuel requis').max(128),
+});
+
+// Modifier son nom ou son numéro (identifiant de connexion) : le mot de passe actuel est exigé.
+router.put('/me', authenticate, authLimiter, async (req, res) => {
+  const data = parseBody(profileSchema, req.body);
+  const { rows } = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+  if (!(await bcrypt.compare(data.currentPassword, rows[0].password_hash))) {
+    throw badRequest('Mot de passe actuel incorrect');
+  }
+  try {
+    const { rows: updated } = await query(
+      'UPDATE users SET full_name = COALESCE($2, full_name), phone = COALESCE($3, phone) WHERE id = $1 RETURNING *',
+      [req.user.id, data.fullName ?? null, data.phone ?? null],
+    );
+    res.json({ user: publicUser(updated[0]) });
+  } catch (err) {
+    if (err.code === '23505') throw new HttpError(409, 'Ce numéro est déjà utilisé par un autre compte');
+    throw err;
+  }
 });
 
 const passwordSchema = z.object({
@@ -118,10 +170,11 @@ router.post('/password', authenticate, authLimiter, async (req, res) => {
   }
   const hash = await bcrypt.hash(data.newPassword, 10);
   const { rows: updated } = await query(
-    'UPDATE users SET password_hash = $2, token_version = token_version + 1 WHERE id = $1 RETURNING *',
+    `UPDATE users SET password_hash = $2, token_version = token_version + 1, must_change_password = false
+     WHERE id = $1 RETURNING *`,
     [req.user.id, hash],
   );
-  res.json({ token: signToken(updated[0]) });
+  res.json({ token: signToken(updated[0]), user: publicUser(updated[0]) });
 });
 
 router.post('/logout-all', authenticate, async (req, res) => {
@@ -135,10 +188,12 @@ const RESET_TTL_MINUTES = 10;
 const RESET_MAX_ATTEMPTS = 5;
 const RESET_MAX_PER_HOUR = 3;
 
+// Clé dérivée (HKDF) : le secret des jetons n'est pas réutilisé tel quel pour les codes SMS.
+const RESET_KEY = Buffer.from(crypto.hkdfSync('sha256', config.jwtSecret, 'my-cvav', 'password-reset-codes', 32));
 const hashResetCode = (userId, code) =>
-  crypto.createHmac('sha256', config.jwtSecret).update(`reset:${userId}:${code}`).digest('hex');
+  crypto.createHmac('sha256', RESET_KEY).update(`reset:${userId}:${code}`).digest('hex');
 
-router.post('/password/forgot', authLimiter, async (req, res) => {
+router.post('/password/forgot', authLimiter, perPhoneLimiter, async (req, res) => {
   const { phone: raw } = parseBody(z.object({ phone: z.string() }), req.body);
   if (smsProvider() === 'disabled') {
     throw new HttpError(503, "L'envoi de SMS n'est pas encore configuré. Contactez un responsable CVAV.");
@@ -199,12 +254,14 @@ router.post('/password/reset', authLimiter, async (req, res) => {
   const user = await withTransaction(async (client) => {
     await client.query('UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [reset.user_id]);
     const { rows: updated } = await client.query(
-      `UPDATE users SET password_hash = $2, token_version = token_version + 1, failed_logins = 0, locked_until = NULL
+      `UPDATE users SET password_hash = $2, token_version = token_version + 1, failed_logins = 0, locked_until = NULL,
+         must_change_password = false
        WHERE id = $1 RETURNING *`,
       [reset.user_id, hash],
     );
     return updated[0];
   });
+  if (user.disabled) throw new HttpError(403, "Ce compte a été désactivé. Contactez l'administrateur.");
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 

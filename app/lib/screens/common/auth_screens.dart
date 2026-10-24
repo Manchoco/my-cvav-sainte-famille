@@ -9,8 +9,9 @@ import 'forgot_password_screen.dart';
 
 /// Connexion / création de compte pour un rôle donné.
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key, required this.role});
+  const AuthScreen({super.key, required this.role, this.loginOnly = false});
   final String role;
+  final bool loginOnly;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -38,7 +39,7 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            SegmentedButton<bool>(
+            if (!widget.loginOnly) SegmentedButton<bool>(
               segments: const [
                 ButtonSegment(value: false, label: Text('Se connecter'), icon: Icon(Icons.login_rounded)),
                 ButtonSegment(value: true, label: Text('Créer un compte'), icon: Icon(Icons.person_add_alt_1_rounded)),

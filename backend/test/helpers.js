@@ -10,11 +10,13 @@ const { pool } = await import('../src/db.js');
 const { migrate } = await import('../src/migrate.js');
 const { createApp } = await import('../src/app.js');
 const { resetYearCache } = await import('../src/services/year.js');
+const { resetSettingsCache } = await import('../src/services/settings.js');
 const supertest = (await import('supertest')).default;
 
 export async function freshApp() {
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   resetYearCache();
+  resetSettingsCache();
   await migrate();
   return supertest(createApp());
 }

@@ -30,14 +30,18 @@ String formatDate(String? iso, {String pattern = 'd MMM yyyy'}) {
 }
 
 class User {
-  User({required this.id, required this.role, required this.fullName, required this.phone, this.legion});
+  User({required this.id, required this.role, required this.fullName, required this.phone, this.legion, this.mustChangePassword = false});
   final int id;
   final String role;
   final String fullName;
   final String phone;
   final Legion? legion;
+  final bool mustChangePassword;
 
-  bool get isResponsable => role == 'responsable';
+  bool get isAdmin => role == 'admin';
+  /// Responsable ou administrateur (l'administrateur a tous les droits d'un responsable).
+  bool get isResponsable => role == 'responsable' || role == 'admin';
+  String get roleLabel => switch (role) { 'admin' => 'Administrateur', 'responsable' => 'Responsable', _ => 'Parent' };
 
   factory User.fromJson(Map<String, dynamic> j) => User(
         id: j['id'] as int,
@@ -45,10 +49,13 @@ class User {
         fullName: j['fullName'] as String,
         phone: j['phone'] as String,
         legion: Legion.fromId(j['legion'] as String?),
+        mustChangePassword: j['mustChangePassword'] as bool? ?? false,
       );
 
-  Map<String, dynamic> toJson() =>
-      {'id': id, 'role': role, 'fullName': fullName, 'phone': phone, 'legion': legion?.name};
+  Map<String, dynamic> toJson() => {
+        'id': id, 'role': role, 'fullName': fullName, 'phone': phone, 'legion': legion?.name,
+        'mustChangePassword': mustChangePassword,
+      };
 }
 
 class Child {
@@ -283,4 +290,30 @@ class AttendanceRecord {
   final String? eventDate;
   final String status;
   final String? markedBy;
+}
+
+/// Compte vu par l'administrateur.
+class AdminUser {
+  AdminUser.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        role = j['role'] as String,
+        fullName = j['fullName'] as String,
+        phone = j['phone'] as String,
+        legion = Legion.fromId(j['legion'] as String?),
+        disabled = j['disabled'] as bool? ?? false,
+        mustChangePassword = j['mustChangePassword'] as bool? ?? false,
+        lastLoginAt = j['lastLoginAt'] as String?,
+        childrenCount = j['childrenCount'] as int? ?? 0;
+
+  final int id;
+  final String role;
+  final String fullName;
+  final String phone;
+  final Legion? legion;
+  final bool disabled;
+  final bool mustChangePassword;
+  final String? lastLoginAt;
+  final int childrenCount;
+
+  String get roleLabel => switch (role) { 'admin' => 'Administrateur', 'responsable' => 'Responsable', _ => 'Parent' };
 }

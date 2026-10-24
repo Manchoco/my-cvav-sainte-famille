@@ -24,6 +24,7 @@ export const config = {
   jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
   // Sans ce code, l'inscription des responsables est fermée (sécurité par défaut).
   responsableSignupCode: env.RESPONSABLE_SIGNUP_CODE || '',
+  trustProxy: env.TRUST_PROXY ? Number(env.TRUST_PROXY) : (env.VERCEL ? 1 : false),
   corsOrigins: (env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
   publicBaseUrl: (env.PUBLIC_BASE_URL || `http://localhost:${env.PORT || 3000}`).replace(/\/$/, ''),
   parishDueDefault: Number(env.PAROISSIALE_MONTANT || 1500),

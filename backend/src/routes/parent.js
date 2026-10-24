@@ -2,7 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { query } from '../db.js';
-import { HttpError, badRequest, notFound, parseBody } from '../errors.js';
+import { HttpError, badRequest, notFound, parseBody, parseId } from '../errors.js';
 import { childDtoForParent } from '../services/children.js';
 import { ensureYear, resolveYear } from '../services/year.js';
 import { waveMode } from '../services/wave.js';
@@ -29,7 +29,7 @@ router.post('/link', linkLimiter, async (req, res) => {
 });
 
 router.delete('/children/:id', async (req, res) => {
-  const { rowCount } = await query('DELETE FROM parent_children WHERE parent_id = $1 AND child_id = $2', [req.user.id, Number(req.params.id)]);
+  const { rowCount } = await query('DELETE FROM parent_children WHERE parent_id = $1 AND child_id = $2', [req.user.id, parseId(req.params.id)]);
   if (!rowCount) throw notFound('Enfant introuvable');
   res.status(204).end();
 });

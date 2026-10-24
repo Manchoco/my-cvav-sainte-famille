@@ -63,6 +63,19 @@ la date et le responsable qui a pointé ; filtre par enfant ; compteurs et taux 
      confirmation » jusqu'à validation d'un responsable.
 4. **Annonces** des responsables.
 
+## Administrateur — carte « Administration » sur l'accueil
+L'administrateur a tous les écrans du responsable, plus l'**Administration** (4 onglets) :
+- **Comptes** : recherche, filtre par rôle ; créer un compte (mot de passe provisoire à transmettre, changement imposé
+  à la première connexion) ; pour chaque compte : rôle, légion, actif/désactivé, nouveau mot de passe provisoire,
+  déconnecter ses appareils, supprimer.
+- **Maintenance** : activer le mode maintenance avec un message (tous les téléphones affichent l'écran de maintenance ;
+  seul l'administrateur peut encore se connecter via « Connexion administrateur »). Publier une mise à jour : numéro de
+  version, version minimale obligatoire, lien de téléchargement et notes.
+- **Accès** : code d'accès responsable (copier, partager, en générer un nouveau).
+- **Journal** : historique des actions sensibles (qui, quoi, quand).
+
+Profil : chacun peut modifier son nom et son numéro de téléphone (mot de passe actuel demandé).
+
 ## États gérés partout
 Chargement, liste vide avec action proposée, erreur réseau avec *Réessayer*, session expirée (retour à l'accueil avec
 message), modifications non enregistrées (confirmation avant de quitter).

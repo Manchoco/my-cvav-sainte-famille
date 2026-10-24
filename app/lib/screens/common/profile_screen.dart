@@ -34,8 +34,8 @@ class ProfileScreen extends StatelessWidget {
                   Text(user.phone, style: const TextStyle(color: AppColors.muted)),
                   const SizedBox(height: 6),
                   StatusPill(
-                    label: user.isResponsable ? 'Responsable${user.legion != null ? ' · ${user.legion!.label}' : ''}' : 'Parent',
-                    color: user.isResponsable ? AppColors.primary : AppColors.warning,
+                    label: '${user.roleLabel}${user.legion != null ? ' · ${user.legion!.label}' : ''}',
+                    color: user.isAdmin ? AppColors.danger : user.isResponsable ? AppColors.primary : AppColors.warning,
                   ),
                 ]),
               ),
@@ -46,6 +46,14 @@ class ProfileScreen extends StatelessWidget {
         Card(
           child: Column(children: [
             ListTile(
+              leading: const Icon(Icons.edit_rounded),
+              title: const Text('Modifier mon nom ou mon numéro'),
+              subtitle: const Text('Le numéro sert à se connecter et à recevoir les SMS'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => _editProfile(context),
+            ),
+            const Divider(height: 1),
+            ListTile(
               leading: const Icon(Icons.password_rounded),
               title: const Text('Changer mon mot de passe'),
               trailing: const Icon(Icons.chevron_right_rounded),
@@ -55,11 +63,11 @@ class ProfileScreen extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.info_outline_rounded),
               title: const Text('À propos'),
-              subtitle: Text('My CVAV Sainte Famille · ${AppConfig.apiUrl}', maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text('Version ${AppConfig.appVersion} (build ${AppConfig.appBuild})'),
               onTap: () => showAboutDialog(
                 context: context,
                 applicationName: 'My CVAV Sainte Famille',
-                applicationVersion: '1.0.0',
+                applicationVersion: '${AppConfig.appVersion} (${AppConfig.appBuild})',
                 applicationIcon: Image.asset('assets/images/logo_cvav.png', width: 48),
                 children: const [Text('Cœurs Vaillants – Âmes Vaillantes\nExternat Sainte Famille, Cocody Riviera II')],
               ),
@@ -80,6 +88,43 @@ class ProfileScreen extends StatelessWidget {
         ),
       ]),
     );
+  }
+
+  Future<void> _editProfile(BuildContext context) async {
+    final user = context.read<Session>().user!;
+    final name = TextEditingController(text: user.fullName);
+    final phone = TextEditingController(text: user.phone);
+    final password = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Mon profil'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: name, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Nom et prénoms')),
+            const SizedBox(height: 12),
+            TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Numéro de téléphone')),
+            const SizedBox(height: 12),
+            TextField(controller: password, obscureText: true, decoration: const InputDecoration(labelText: 'Mot de passe actuel (sécurité)')),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+          FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(0, 44)), onPressed: () => Navigator.pop(ctx, true), child: const Text('Enregistrer')),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    try {
+      await context.read<Session>().updateProfile(
+            fullName: name.text.trim() == user.fullName ? null : name.text.trim(),
+            phone: phone.text.trim() == user.phone ? null : phone.text.trim(),
+            currentPassword: password.text,
+          );
+      if (context.mounted) showMessage(context, 'Profil mis à jour');
+    } catch (e) {
+      if (context.mounted) showMessage(context, errorText(e), error: true);
+    }
   }
 
   Future<void> _changePassword(BuildContext context) async {

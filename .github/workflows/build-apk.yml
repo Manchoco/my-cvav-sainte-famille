@@ -63,26 +63,36 @@ jobs:
       - run: flutter analyze
       - run: flutter test
 
-      # Signature : ajouter les secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
-      # ANDROID_KEY_ALIAS et ANDROID_KEY_PASSWORD. Sans eux, l'APK est signé en mode debug (tests seulement).
-      - name: Préparer le keystore
+      # Signature définitive : la clé est dans le dépôt, chiffrée (android/release-keystore.enc).
+      # Seul le secret ANDROID_SIGNING_PASSWORD permet de la déchiffrer. Sans lui, signature de test.
+      - name: Préparer la clé de signature
         env:
-          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          if [ -n "$SIGNING_PASSWORD" ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in android/release-keystore.enc \
+              -out "$RUNNER_TEMP/release.jks" -pass env:SIGNING_PASSWORD
+            {
+              echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks"
+              echo "ANDROID_KEY_ALIAS=cvav"
+            } >> "$GITHUB_ENV"
+            echo "Signature : clé définitive My CVAV"
+          else
+            echo "::warning title=Signature de test::Ajoutez le secret ANDROID_SIGNING_PASSWORD pour signer avec la clé définitive (mises à jour possibles sans désinstaller)."
           fi
 
       - name: Compiler l'APK
         env:
           API_URL: ${{ github.event.inputs.api_url || vars.API_URL || 'https://my-cvav-sainte-famille-api-mamadoudibate-5976.vercel.app' }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
         run: |
           set -o pipefail
-          if ! flutter build apk --release --dart-define=API_URL="$API_URL" 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+          VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *//')
+          APP_VERSION=${VERSION%%+*}
+          APP_BUILD=${VERSION##*+}
+          if ! flutter build apk --release --dart-define=API_URL="$API_URL" \
+               --dart-define=APP_VERSION="$APP_VERSION" --dart-define=APP_BUILD="$APP_BUILD" 2>&1 | tee "$RUNNER_TEMP/build.log"; then
             # Remonte les lignes d'erreur dans le résumé et les annotations de la compilation.
             grep -nE "What went wrong|rror|FAILURE|Exception|^e: |> " "$RUNNER_TEMP/build.log" | head -n 60 > "$RUNNER_TEMP/errors.txt" || true
             { echo '### Erreurs de compilation'; echo '```'; cat "$RUNNER_TEMP/errors.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

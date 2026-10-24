@@ -13,13 +13,16 @@ import postsRoutes from './routes/posts.js';
 import parentRoutes from './routes/parent.js';
 import paymentsRoutes from './routes/payments.js';
 import statsRoutes from './routes/stats.js';
+import adminRoutes from './routes/admin.js';
+import { getSettings } from './services/settings.js';
 import { LEGIONS, LEGION_LABELS, currentPastoralYear } from './domain.js';
 import { waveMode } from './services/wave.js';
 import { smsProvider } from './services/sms.js';
 
 export function createApp() {
   const app = express();
-  app.set('trust proxy', 1);
+  // Derrière le proxy de Vercel uniquement : ailleurs, X-Forwarded-For serait falsifiable (contournement des limites).
+  app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
   app.use(helmet());
   // L'application mobile n'envoie pas d'en-tête Origin ; CORS ne concerne qu'un éventuel client web.
@@ -31,14 +34,19 @@ export function createApp() {
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
-  app.get('/api/meta', (_req, res) => res.json({
-    name: 'My CVAV Sainte Famille',
-    year: currentPastoralYear(),
-    legions: LEGIONS.map((id) => ({ id, label: LEGION_LABELS[id] })),
-    paymentMode: waveMode(),
-    passwordResetBySms: smsProvider() !== 'disabled',
-    responsableSignupOpen: Boolean(config.responsableSignupCode),
-  }));
+  app.get('/api/meta', async (_req, res) => {
+    const settings = await getSettings();
+    res.json({
+      name: 'My CVAV Sainte Famille',
+      year: currentPastoralYear(),
+      legions: LEGIONS.map((id) => ({ id, label: LEGION_LABELS[id] })),
+      paymentMode: waveMode(),
+      passwordResetBySms: smsProvider() !== 'disabled',
+      responsableSignupOpen: Boolean(settings.signupCode),
+      maintenance: settings.maintenance,
+      appUpdate: settings.app_update,
+    });
+  });
 
   app.use('/api/auth', authRoutes);
   app.use('/api/children', authenticate, requireRole('responsable'), childrenRoutes);
@@ -47,6 +55,7 @@ export function createApp() {
   app.use('/api/stats', authenticate, requireRole('responsable'), statsRoutes);
   app.use('/api/posts', authenticate, postsRoutes);
   app.use('/api/parent', authenticate, requireRole('parent'), parentRoutes);
+  app.use('/api/admin', authenticate, requireRole('admin'), adminRoutes);
 
   app.use((_req, _res, next) => next(new HttpError(404, 'Route introuvable')));
 
@@ -60,6 +69,8 @@ export function createApp() {
     res.status(status).json({
       error: status >= 500 && !(err instanceof HttpError) && status !== 502 ? 'Erreur interne du serveur' : err.message,
       ...(err.details ? { details: err.details } : {}),
+      ...(err.code === 'PASSWORD_CHANGE_REQUIRED' ? { code: err.code } : {}),
+      ...(err.maintenance ? { maintenance: true } : {}),
     });
   });
 

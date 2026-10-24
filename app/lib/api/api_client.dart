@@ -26,6 +26,8 @@ class ApiClient {
 
   String? token;
   void Function()? onUnauthorized;
+  void Function(String message)? onMaintenance;
+  void Function()? onPasswordChangeRequired;
   final http.Client _http = http.Client();
   // Large : un serveur gratuit (Render) peut mettre ~50 s à se réveiller.
   static const _timeout = Duration(seconds: 60);
@@ -52,6 +54,9 @@ class ApiClient {
 
   Future<dynamic> put(String path, [Object? body]) =>
       _send(() => _http.put(_uri(path), headers: _headers, body: jsonEncode(body ?? {})));
+
+  Future<dynamic> patch(String path, [Object? body]) =>
+      _send(() => _http.patch(_uri(path), headers: _headers, body: jsonEncode(body ?? {})));
 
   Future<dynamic> delete(String path) => _send(() => _http.delete(_uri(path), headers: _headers));
 
@@ -91,6 +96,8 @@ class ApiClient {
         ? (body['details'] as List).map((d) => d is Map ? '${d['message']}' : '$d').toList()
         : <String>[];
     if (res.statusCode == 401 && token != null) onUnauthorized?.call();
+    if (res.statusCode == 503 && body is Map && body['maintenance'] == true) onMaintenance?.call(message);
+    if (res.statusCode == 403 && body is Map && body['code'] == 'PASSWORD_CHANGE_REQUIRED') onPasswordChangeRequired?.call();
     throw ApiException(message, status: res.statusCode, details: details);
   }
 }

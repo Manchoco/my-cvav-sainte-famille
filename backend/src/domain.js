@@ -31,7 +31,8 @@ export function currentPastoralYear(date = new Date()) {
 export const YEAR_PATTERN = /^\d{4}-\d{4}$/;
 
 export function normalizePhone(raw) {
-  if (raw == null) return null;
+  // Uniquement des chaînes ou des nombres : un objet piégé ({ toString: 1 }) ferait planter String().
+  if (typeof raw !== 'string' && typeof raw !== 'number') return null;
   let digits = String(raw).replace(/[^\d+]/g, '');
   if (digits.startsWith('+')) digits = digits.slice(1);
   if (digits.startsWith('00')) digits = digits.slice(2);

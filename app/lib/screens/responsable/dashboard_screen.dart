@@ -6,6 +6,7 @@ import '../../models.dart';
 import '../../state/session.dart';
 import '../../theme.dart';
 import '../../widgets/common.dart';
+import '../admin/admin_screen.dart';
 import '../common/profile_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -38,7 +39,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               GradientHeader(
                 title: 'Bonjour, ${user.fullName.split(' ').first}',
-                subtitle: 'Responsable${user.legion != null ? ' · ${user.legion!.label}' : ''} · ${stats?['year'] ?? ''}',
+                subtitle: '${user.roleLabel}${user.legion != null ? ' · ${user.legion!.label}' : ''} · ${stats?['year'] ?? ''}',
                 trailing: IconButton(
                   tooltip: 'Mon profil',
                   onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen())),
@@ -53,6 +54,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  if (user.isAdmin) ...[
+                    const SizedBox(height: 16),
+                    Card(
+                      color: const Color(0xFFFDECEC),
+                      clipBehavior: Clip.antiAlias,
+                      child: ListTile(
+                        leading: const Icon(Icons.shield_rounded, color: AppColors.danger),
+                        title: const Text('Administration', style: TextStyle(fontWeight: FontWeight.w800)),
+                        subtitle: const Text('Comptes, maintenance, mises à jour, code d\'accès, journal'),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminScreen())),
+                      ),
+                    ),
+                  ],
                   if (snap.hasError) Padding(padding: const EdgeInsets.only(top: 16), child: ErrorView(error: snap.error!, onRetry: _reload)),
                   if (stats != null) ...[
                     const SectionTitle('Effectifs par légion'),
