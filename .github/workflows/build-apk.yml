@@ -81,7 +81,14 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          flutter build apk --release --dart-define=API_URL="$API_URL"
+          set -o pipefail
+          if ! flutter build apk --release --dart-define=API_URL="$API_URL" 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+            # Remonte les lignes d'erreur dans le résumé et les annotations de la compilation.
+            grep -nE "What went wrong|rror|FAILURE|Exception|^e: |> " "$RUNNER_TEMP/build.log" | head -n 60 > "$RUNNER_TEMP/errors.txt" || true
+            { echo '### Erreurs de compilation'; echo '```'; cat "$RUNNER_TEMP/errors.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Compilation APK::$(sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g' "$RUNNER_TEMP/errors.txt")"
+            exit 1
+          fi
           cp build/app/outputs/flutter-apk/app-release.apk build/my-cvav-sainte-famille.apk
 
       - uses: actions/upload-artifact@v4
