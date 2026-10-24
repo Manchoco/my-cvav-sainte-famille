@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+.DS_Store
+app/build/
+app/.dart_tool/
+app/android/key.properties
+*.jks
+*.keystore
