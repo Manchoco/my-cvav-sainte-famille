@@ -96,8 +96,23 @@ jobs:
           name: my-cvav-sainte-famille-apk
           path: app/build/my-cvav-sainte-famille.apk
 
+      # Version publiée dans « Releases » : v + numéro de pubspec.yaml (ex. v1.0.0).
+      # Chaque envoi sur main met à jour l'APK de cette version ; changer « version: » dans pubspec.yaml en crée une nouvelle.
+      - name: Lire le numéro de version
+        id: version
+        run: |
+          echo "tag=v$(grep '^version:' pubspec.yaml | sed -E 's/version: *//; s/\+.*//')" >> "$GITHUB_OUTPUT"
+
       - name: Publier la version
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: My CVAV Sainte Famille ${{ steps.version.outputs.tag }}
+          make_latest: true
+          overwrite_files: true
+          body: |
+            Application Android **My CVAV Sainte Famille**.
+            Téléchargez `my-cvav-sainte-famille.apk` ci-dessous, ouvrez-le sur le téléphone et autorisez l'installation.
           files: app/build/my-cvav-sainte-famille.apk
