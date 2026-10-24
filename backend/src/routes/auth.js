@@ -4,10 +4,11 @@ import crypto from 'node:crypto';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { LEGIONS, normalizePhone } from '../domain.js';
 import { HttpError, badRequest, parseBody } from '../errors.js';
 import { authenticate, signToken } from '../middleware/auth.js';
+import { sendSms, smsProvider } from '../services/sms.js';
 
 const router = Router();
 const MAX_FAILED = 5;
@@ -126,6 +127,85 @@ router.post('/password', authenticate, authLimiter, async (req, res) => {
 router.post('/logout-all', authenticate, async (req, res) => {
   await query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [req.user.id]);
   res.status(204).end();
+});
+
+// --- Mot de passe oublié : code à 6 chiffres envoyé par SMS ---
+
+const RESET_TTL_MINUTES = 10;
+const RESET_MAX_ATTEMPTS = 5;
+const RESET_MAX_PER_HOUR = 3;
+
+const hashResetCode = (userId, code) =>
+  crypto.createHmac('sha256', config.jwtSecret).update(`reset:${userId}:${code}`).digest('hex');
+
+router.post('/password/forgot', authLimiter, async (req, res) => {
+  const { phone: raw } = parseBody(z.object({ phone: z.string() }), req.body);
+  if (smsProvider() === 'disabled') {
+    throw new HttpError(503, "L'envoi de SMS n'est pas encore configuré. Contactez un responsable CVAV.");
+  }
+  const phone = normalizePhone(raw);
+  if (!phone) throw badRequest('Numéro de téléphone invalide');
+  const { rows } = await query('SELECT id FROM users WHERE phone = $1', [phone]);
+  const user = rows[0];
+  // Même réponse que le numéro existe ou non (pas de divulgation des comptes).
+  if (user) {
+    const { rows: recent } = await query(
+      `SELECT count(*)::int AS n FROM password_resets WHERE user_id = $1 AND created_at > now() - interval '1 hour'`,
+      [user.id],
+    );
+    if (recent[0].n < RESET_MAX_PER_HOUR) {
+      const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+      await query(
+        `INSERT INTO password_resets (user_id, code_hash, expires_at) VALUES ($1, $2, now() + ($3 || ' minutes')::interval)`,
+        [user.id, hashResetCode(user.id, code), String(RESET_TTL_MINUTES)],
+      );
+      try {
+        await sendSms(phone, `My CVAV : votre code de réinitialisation est ${code}. Il expire dans ${RESET_TTL_MINUTES} minutes. Ne le communiquez à personne.`);
+      } catch (err) {
+        console.error('Envoi SMS échoué', err.message);
+        throw new HttpError(502, "Le SMS n'a pas pu être envoyé. Réessayez dans quelques minutes.");
+      }
+    }
+  }
+  res.json({ sent: true, expiresInMinutes: RESET_TTL_MINUTES });
+});
+
+const resetSchema = z.object({
+  phone: z.string(),
+  code: z.string().trim().regex(/^\d{6}$/, 'Le code contient 6 chiffres'),
+  newPassword: z.string().min(8, 'Le mot de passe doit contenir au moins 8 caractères').max(128),
+});
+
+router.post('/password/reset', authLimiter, async (req, res) => {
+  const data = parseBody(resetSchema, req.body);
+  const phone = normalizePhone(data.phone);
+  const invalid = () => new HttpError(400, 'Code incorrect ou expiré. Demandez un nouveau code.');
+  if (!phone) throw invalid();
+  const { rows } = await query(
+    `SELECT r.id, r.user_id, r.code_hash, r.attempts FROM password_resets r JOIN users u ON u.id = r.user_id
+     WHERE u.phone = $1 AND r.used_at IS NULL AND r.expires_at > now()
+     ORDER BY r.created_at DESC LIMIT 1`,
+    [phone],
+  );
+  const reset = rows[0];
+  if (!reset || reset.attempts >= RESET_MAX_ATTEMPTS) throw invalid();
+  const expected = Buffer.from(reset.code_hash, 'hex');
+  const given = Buffer.from(hashResetCode(reset.user_id, data.code), 'hex');
+  if (!crypto.timingSafeEqual(expected, given)) {
+    await query('UPDATE password_resets SET attempts = attempts + 1 WHERE id = $1', [reset.id]);
+    throw invalid();
+  }
+  const hash = await bcrypt.hash(data.newPassword, 10);
+  const user = await withTransaction(async (client) => {
+    await client.query('UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [reset.user_id]);
+    const { rows: updated } = await client.query(
+      `UPDATE users SET password_hash = $2, token_version = token_version + 1, failed_logins = 0, locked_until = NULL
+       WHERE id = $1 RETURNING *`,
+      [reset.user_id, hash],
+    );
+    return updated[0];
+  });
+  res.json({ token: signToken(user), user: publicUser(user) });
 });
 
 export default router;

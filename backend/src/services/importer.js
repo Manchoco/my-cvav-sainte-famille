@@ -2,7 +2,6 @@
 // Le résultat est un aperçu : rien n'est enregistré tant que le responsable n'a pas validé.
 import ExcelJS from 'exceljs';
 import mammoth from 'mammoth';
-import { PDFParse } from 'pdf-parse';
 import { LEGIONS, legionForAge, normalizePhone } from '../domain.js';
 
 const strip = (s) => String(s ?? '')
@@ -145,6 +144,8 @@ async function rowsFromDocx(buffer) {
 }
 
 async function rowsFromPdf(buffer) {
+  // Chargé à la demande : pdf.js dépend d'un module natif (canvas) qui ne doit pas bloquer le démarrage de l'API.
+  const { PDFParse } = await import('pdf-parse');
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
   try {
     const { text } = await parser.getText();

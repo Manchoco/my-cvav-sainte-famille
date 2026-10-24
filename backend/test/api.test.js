@@ -239,3 +239,50 @@ test('changement de mot de passe : anciennes sessions invalidées', async () => 
   assert.equal((await api.get('/api/auth/me').set(parent.auth)).status, 401);
   assert.equal((await api.get('/api/auth/me').set({ Authorization: `Bearer ${res.body.token}` })).status, 200);
 });
+
+test('mot de passe oublié : code SMS, essais limités, sessions invalidées', async () => {
+  const { consoleOutbox } = await import('../src/services/sms.js');
+  const resp2 = await register(api, { role: 'responsable', phone: '0700000010', name: 'Resp Deux' });
+
+  // Numéro inconnu : même réponse, aucun SMS
+  const before = consoleOutbox.length;
+  const unknown = await api.post('/api/auth/password/forgot').send({ phone: '0799999999' });
+  assert.equal(unknown.status, 200);
+  assert.equal(consoleOutbox.length, before);
+
+  const sent = await api.post('/api/auth/password/forgot').send({ phone: '07 00 00 00 10' });
+  assert.equal(sent.status, 200);
+  const sms = consoleOutbox.at(-1);
+  assert.equal(sms.to, '+2250700000010');
+  const code = sms.message.match(/\d{6}/)[0];
+
+  const wrong = await api.post('/api/auth/password/reset').send({ phone: '0700000010', code: code === '000000' ? '111111' : '000000', newPassword: 'nouveau-mdp-1' });
+  assert.equal(wrong.status, 400);
+
+  const ok = await api.post('/api/auth/password/reset').send({ phone: '0700000010', code, newPassword: 'nouveau-mdp-1' });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.ok(ok.body.token);
+  assert.equal((await api.get('/api/auth/me').set(resp2.auth)).status, 401);
+  const login = await api.post('/api/auth/login').send({ phone: '0700000010', password: 'nouveau-mdp-1' });
+  assert.equal(login.status, 200);
+
+  // Code déjà utilisé
+  const reuse = await api.post('/api/auth/password/reset').send({ phone: '0700000010', code, newPassword: 'autre-mdp-12' });
+  assert.equal(reuse.status, 400);
+
+  // 5 essais maximum par code
+  await api.post('/api/auth/password/forgot').send({ phone: '0700000010' });
+  const code2 = consoleOutbox.at(-1).message.match(/\d{6}/)[0];
+  const bad = code2 === '123456' ? '654321' : '123456';
+  for (let i = 0; i < 5; i += 1) {
+    await api.post('/api/auth/password/reset').send({ phone: '0700000010', code: bad, newPassword: 'autre-mdp-12' });
+  }
+  const blocked = await api.post('/api/auth/password/reset').send({ phone: '0700000010', code: code2, newPassword: 'autre-mdp-12' });
+  assert.equal(blocked.status, 400);
+
+  // 3 demandes par heure maximum
+  const count = consoleOutbox.length;
+  await api.post('/api/auth/password/forgot').send({ phone: '0700000010' });
+  await api.post('/api/auth/password/forgot').send({ phone: '0700000010' });
+  assert.equal(consoleOutbox.length, count + 1);
+});

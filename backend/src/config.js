@@ -27,6 +27,16 @@ export const config = {
   corsOrigins: (env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
   publicBaseUrl: (env.PUBLIC_BASE_URL || `http://localhost:${env.PORT || 3000}`).replace(/\/$/, ''),
   parishDueDefault: Number(env.PAROISSIALE_MONTANT || 1500),
+  sms: {
+    provider: (env.SMS_PROVIDER || '').toLowerCase(), // orange | twilio | console
+    senderName: env.SMS_SENDER_NAME || '',
+    orangeClientId: env.ORANGE_CLIENT_ID || '',
+    orangeClientSecret: env.ORANGE_CLIENT_SECRET || '',
+    orangeSender: env.ORANGE_SENDER_ADDRESS || 'tel:+2250000',
+    twilioSid: env.TWILIO_ACCOUNT_SID || '',
+    twilioToken: env.TWILIO_AUTH_TOKEN || '',
+    twilioFrom: env.TWILIO_FROM || '',
+  },
   wave: {
     apiKey: env.WAVE_API_KEY || '',
     webhookSecret: env.WAVE_WEBHOOK_SECRET || '',

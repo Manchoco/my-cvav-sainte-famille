@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AppConfig {
   static const String defaultApiUrl = String.fromEnvironment(
     'API_URL',
-    defaultValue: 'https://my-cvav-api.onrender.com',
+    defaultValue: 'https://my-cvav-sainte-famille-api-mamadoudibate-5976.vercel.app',
   );
   static const _key = 'api_url';
   static String apiUrl = defaultApiUrl;

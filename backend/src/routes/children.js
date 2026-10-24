@@ -11,7 +11,8 @@ const router = Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  // 4 Mo : la plateforme d'hébergement limite le corps des requêtes à 4,5 Mo.
+  limits: { fileSize: 4 * 1024 * 1024, files: 1 },
 });
 
 const optionalText = z.string().trim().max(200).optional().nullable().transform((v) => (v ? v : null));

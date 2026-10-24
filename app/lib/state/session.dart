@@ -84,6 +84,13 @@ class Session extends ChangeNotifier {
     await _save(res as Map<String, dynamic>);
   }
 
+  Future<void> requestPasswordReset(String phone) => ApiClient.instance.post('/auth/password/forgot', {'phone': phone});
+
+  Future<void> resetPassword(String phone, String code, String newPassword) async {
+    final res = await ApiClient.instance.post('/auth/password/reset', {'phone': phone, 'code': code, 'newPassword': newPassword});
+    await _save(res as Map<String, dynamic>);
+  }
+
   Future<void> changePassword(String current, String next) async {
     final res = await ApiClient.instance.post('/auth/password', {'currentPassword': current, 'newPassword': next});
     final token = res['token'] as String;

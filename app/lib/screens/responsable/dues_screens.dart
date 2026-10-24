@@ -66,10 +66,22 @@ class _DuesScreenState extends State<DuesScreen> {
                   icon: Icons.account_balance_rounded,
                   color: const Color(0xFF7B4BC4),
                   title: 'Cotisation diocésaine',
-                  subtitle: diocese.amount == null ? 'Montant à définir' : formatMoney(diocese.amount),
+                  subtitle: diocese.amount == null ? 'Montant à définir — touchez pour le fixer' : formatMoney(diocese.amount),
                   paid: diocese.paidCount,
                   pending: diocese.pendingCount,
-                  onTap: () => _open(DuePaymentsScreen(dueId: diocese.id)),
+                  onTap: () async {
+                    if (diocese.amount == null) {
+                      final amount = await _askAmount(context, title: 'Montant de la cotisation diocésaine', current: null);
+                      if (amount == null || amount < 0 || !context.mounted) return;
+                      try {
+                        await Repo.setDueAmount(diocese.id, amount);
+                      } catch (e) {
+                        if (context.mounted) showMessage(context, errorText(e), error: true);
+                        return;
+                      }
+                    }
+                    await _open(DuePaymentsScreen(dueId: diocese.id));
+                  },
                 ),
                 _DueCard(
                   icon: Icons.celebration_rounded,

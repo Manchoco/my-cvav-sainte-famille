@@ -4,6 +4,7 @@ process.env.JWT_SECRET = 'test-secret-test-secret-test-secret-1234';
 process.env.RESPONSABLE_SIGNUP_CODE = 'CODE-RESP-2026';
 process.env.WAVE_WEBHOOK_SECRET = 'wave-test-secret';
 process.env.WAVE_MERCHANT_LINK = 'https://pay.wave.com/m/M_ci_test/c/ci/';
+process.env.SMS_PROVIDER = 'console';
 
 const { pool } = await import('../src/db.js');
 const { migrate } = await import('../src/migrate.js');

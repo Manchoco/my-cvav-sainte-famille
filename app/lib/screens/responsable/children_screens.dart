@@ -598,7 +598,7 @@ class _ImportScreenState extends State<ImportScreen> {
     });
     try {
       final bytes = await file.readAsBytes();
-      if (bytes.length > 5 * 1024 * 1024) throw ApiException('Fichier trop volumineux (5 Mo maximum)');
+      if (bytes.length > 4 * 1024 * 1024) throw ApiException('Fichier trop volumineux (4 Mo maximum)');
       final rows = await Repo.importPreview(bytes, file.name);
       for (final r in rows) {
         r.selected = !r.duplicate;

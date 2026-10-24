@@ -5,6 +5,7 @@ import '../../models.dart';
 import '../../state/session.dart';
 import '../../theme.dart';
 import '../../widgets/common.dart';
+import 'forgot_password_screen.dart';
 
 /// Connexion / création de compte pour un rôle donné.
 class AuthScreen extends StatefulWidget {
@@ -125,11 +126,13 @@ class _LoginFormState extends State<_LoginForm> {
             onPressed: _busy ? null : _submit,
             child: _busy ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white)) : const Text('Se connecter'),
           ),
-          const SizedBox(height: 16),
-          const Text(
-            'Mot de passe oublié ? Contactez un responsable CVAV pour réinitialiser votre accès.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.muted, fontSize: 13),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => ForgotPasswordScreen(initialPhone: _phone.text)),
+            ),
+            child: const Text('Mot de passe oublié ?'),
           ),
         ]),
       ),

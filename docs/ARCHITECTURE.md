@@ -37,7 +37,9 @@ alerte si l'on quitte sans enregistrer.
 
 | Fichier | Rôle |
 |---|---|
-| `src/server.js` | Migration puis écoute HTTP, arrêt propre |
+| `src/server.js` | Migration puis écoute HTTP, arrêt propre (hébergement classique / Docker) |
+| `api/index.js`, `vercel.json` | Point d'entrée Vercel : migrations au premier appel, région Francfort |
+| `src/services/sms.js` | Envoi des codes SMS (Orange SMS API, Twilio) |
 | `src/app.js` | Middlewares (helmet, CORS, limitation de débit), routes, gestion d'erreurs |
 | `src/migrations/*.sql` | Schéma versionné (table `schema_migrations`) |
 | `src/routes/` | `auth`, `children`, `events` (+ présences), `dues` (+ paiements), `posts`, `parent`, `payments`, `stats` |
@@ -56,6 +58,7 @@ attendance(event_id → events, child_id → children, status[present|absent], m
 dues(id, kind[paroissiale|diocesaine|activite], year, event_id → events, label, amount)
 payments(due_id → dues, child_id → children, status[pending|paid], method[manuel|wave|wave_declare], amount, reference)
 wave_sessions(id, due_id, child_id, parent_id, amount, status)
+password_resets(id, user_id, code_hash, expires_at, attempts, used_at)
 posts(id, title, body, pinned, created_by)
 ```
 
@@ -72,10 +75,12 @@ Toutes les routes sont préfixées par `/api`. 🔒R = responsable, 🔒P = pare
 | POST | `/auth/login` | public | Connexion par téléphone + mot de passe |
 | GET | `/auth/me` | 🔒 | Profil |
 | POST | `/auth/password`, `/auth/logout-all` | 🔒 | Changer le mot de passe / déconnecter tous les appareils |
+| POST | `/auth/password/forgot` | public | Envoie un code SMS (réponse identique si le numéro est inconnu) |
+| POST | `/auth/password/reset` | public | Code SMS + nouveau mot de passe → connecté |
 | GET/POST | `/children` | 🔒R | Liste (filtres `legion`, `q`) / ajout |
 | GET/PUT/DELETE | `/children/:id` | 🔒R | Détail / modification / suppression |
 | POST | `/children/:id/regenerate-code` | 🔒R | Nouveau code enfant (retire l'accès des parents liés) |
-| POST | `/children/import/preview` | 🔒R | Fichier (multipart `file`, 5 Mo max) → aperçu |
+| POST | `/children/import/preview` | 🔒R | Fichier (multipart `file`, 4 Mo max) → aperçu |
 | POST | `/children/import/commit` | 🔒R | Enregistre les lignes validées |
 | GET/POST | `/events` | 🔒R | Activités et réunions de l'année (`year`, `kind`) / création |
 | PUT/DELETE | `/events/:id` | 🔒R | Intitulé, date, prix / suppression |

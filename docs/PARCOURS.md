@@ -9,6 +9,10 @@
    - Responsable : nom, téléphone, légion, **code d'accès responsable**, mot de passe.
    - Parent : nom, téléphone, mot de passe.
 
+## Mot de passe oublié
+![Mot de passe oublié](captures/05-mot-de-passe-oublie.png)
+Lien sous « Se connecter » → numéro → code reçu par SMS → nouveau mot de passe → connecté directement.
+
 ## Responsable — barre du bas : Accueil · Enfants · Présences · Cotisations · Infos
 
 **Accueil** : effectif total et par légion, total des cotisations reçues, paiements Wave à confirmer, dernier
@@ -29,6 +33,7 @@ pointage (barre présents/absents), actions rapides.
 
 **Cotisations**
 - Total encaissé, puis trois cartes :
+  - **Cotisation diocésaine** : à la première ouverture, le responsable saisit le montant ; modifiable ensuite (✏️).
   - **Cotisation paroissiale** (1 500 F) et **Cotisation diocésaine** → liste par légion, cases à cocher pour les
     enfants ayant payé, ✏️ pour changer le montant. Mentions « Paiement Wave déclaré — cochez pour confirmer » et
     « Payé via Wave ».

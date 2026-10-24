@@ -12,7 +12,7 @@ cvav/
 ├── app/        Application Flutter (Android ; version web possible)
 ├── backend/    API REST Node.js + PostgreSQL
 ├── docs/       Architecture, API, sécurité, parcours et captures
-├── render.yaml Déploiement de l'API en un clic sur Render
+├── backend/vercel.json  Hébergement de l'API sur Vercel (base Neon)
 └── .github/workflows/build-apk.yml  Tests + compilation automatique de l'APK
 ```
 
@@ -56,7 +56,8 @@ flutter pub get
 flutter run --dart-define=API_URL=http://10.0.2.2:3000   # émulateur Android
 ```
 
-Comptes de démo créés par `npm run seed` : responsable `0700000001`, parent `0700000002`, mot de passe `cvav2026`.
+Comptes de démo créés par `npm run seed` en local uniquement : responsable `0700000001`, parent `0700000002`,
+mot de passe `cvav2026`. La base en ligne est vide : le premier responsable crée son compte avec le code d'accès.
 
 ## Obtenir l'APK
 
@@ -81,28 +82,42 @@ flutter build apk --release --dart-define=API_URL=https://votre-api.exemple.com
 
 L'adresse de l'API peut aussi être changée dans l'application : **appui long sur le logo CVAV** de l'écran d'accueil.
 
-## Déployer l'API
+## Hébergement (en ligne, gratuit)
 
-- **Render** : *New → Blueprint* avec ce dépôt (fichier `render.yaml`), puis renseigner `RESPONSABLE_SIGNUP_CODE`,
-  `PUBLIC_BASE_URL` (ex. `https://my-cvav-api.onrender.com`) et la configuration Wave.
-  ⚠️ Sur l'offre gratuite, le service s'endort après 15 min d'inactivité (premier chargement ≈ 50 s) et la base
-  PostgreSQL gratuite de Render expire au bout de 30 jours : pour garder les données, utilisez une base gratuite
-  durable (Neon, Supabase) via `DATABASE_URL` + `DATABASE_SSL=true`, ou une offre payante.
-- **Docker** : `docker build -t my-cvav-api backend && docker run -p 3000:3000 --env-file backend/.env my-cvav-api`.
-
-Les migrations SQL sont appliquées automatiquement au démarrage.
-
-## Paiement Wave
-
-Deux modes, choisis par les variables d'environnement de l'API :
-
-| Mode | Configuration | Fonctionnement |
+| Élément | Service | Détail |
 |---|---|---|
-| **Wave Business (Checkout API)** — recommandé | `WAVE_API_KEY`, `WAVE_WEBHOOK_SECRET`, `PUBLIC_BASE_URL` ; webhook Wave → `https://VOTRE-API/api/payments/wave/webhook` | L'API crée une session de paiement au bon montant, Wave s'ouvre, et le **webhook signé** marque automatiquement la cotisation comme payée. |
-| **Lien marchand** | `WAVE_MERCHANT_LINK` (ex. `https://pay.wave.com/m/M_ci_XXXX/c/ci/`) | Wave s'ouvre avec le montant. Au retour, le parent déclare son paiement (n° de transaction facultatif) ; un responsable le confirme en cochant l'enfant. |
+| API | **Vercel** (offre Hobby gratuite) | `https://my-cvav-sainte-famille-api-mamadoudibate-5976.vercel.app` — fonctions à Francfort (`fra1`) |
+| Base de données | **Neon** (offre gratuite, sans expiration) | PostgreSQL 17, projet `my-cvav-sainte-famille`, région Francfort, 0,5 Go |
 
-Sans aucune des deux, le bouton affiche « paiement Wave non configuré ». Le format exact du lien marchand et
-l'activation de l'API Checkout sont à vérifier auprès de Wave Business pour votre compte.
+- Les migrations s'appliquent automatiquement au premier appel de l'API.
+- L'application est déjà configurée sur cette adresse (`app/lib/config.dart`).
+- Les secrets (`DATABASE_URL`, `JWT_SECRET`, `RESPONSABLE_SIGNUP_CODE`) sont dans *Vercel → Projet → Settings → Environment Variables*, jamais dans le code.
+- Après toute modification d'une variable sur Vercel : *Deployments → ⋯ → Redeploy*.
+- Limites gratuites : Neon met la base en veille après 5 min d'inactivité (premier appel ≈ 1 s de plus) ; Vercel Hobby est réservé à un usage non commercial, ce qui convient à une association paroissiale.
+- Redéployer depuis un ordinateur : `cd backend && npx vercel --prod`. Alternative auto-hébergée : `backend/Dockerfile`.
+
+## Mot de passe oublié (SMS)
+
+L'écran « Mot de passe oublié ? » envoie un code à 6 chiffres par SMS (valable 10 min, 5 essais, 3 demandes/heure).
+Il faut un fournisseur SMS ; sans lui, l'application affiche « envoi de SMS pas encore configuré ».
+
+**Orange SMS API (recommandé en Côte d'Ivoire)** : créer un compte sur developer.orange.com, une application avec
+l'API « SMS Côte d'Ivoire », acheter un forfait de SMS, puis ajouter sur Vercel :
+`SMS_PROVIDER=orange`, `ORANGE_CLIENT_ID`, `ORANGE_CLIENT_SECRET`, `ORANGE_SENDER_ADDRESS=tel:+2250000`,
+et facultativement `SMS_SENDER_NAME=CVAV` (nom d'expéditeur à faire valider par Orange).
+Twilio est aussi pris en charge (`SMS_PROVIDER=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`).
+
+## Paiement Wave (Wave Business — Checkout API)
+
+1. Ouvrir un compte **Wave Business** pour l'association et demander l'accès API (business.wave.com → Développeurs).
+2. Créer une **clé API** avec le droit *Checkout* et un **webhook** vers
+   `https://my-cvav-sainte-famille-api-mamadoudibate-5976.vercel.app/api/payments/wave/webhook`
+   (événement `checkout.session.completed`, signature par secret partagé).
+3. Ajouter sur Vercel `WAVE_API_KEY` et `WAVE_WEBHOOK_SECRET`, puis *Redeploy*.
+
+Le parent touche **PAYER LA COTISATION** → l'API crée une session au bon montant → Wave s'ouvre → le webhook signé
+marque automatiquement la cotisation comme payée. Tant que les clés ne sont pas ajoutées, le bouton indique que le
+paiement Wave n'est pas encore configuré. (Un mode « lien marchand » existe aussi : `WAVE_MERCHANT_LINK`.)
 
 ## Documentation
 

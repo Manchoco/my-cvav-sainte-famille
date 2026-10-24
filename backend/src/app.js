@@ -15,6 +15,7 @@ import paymentsRoutes from './routes/payments.js';
 import statsRoutes from './routes/stats.js';
 import { LEGIONS, LEGION_LABELS, currentPastoralYear } from './domain.js';
 import { waveMode } from './services/wave.js';
+import { smsProvider } from './services/sms.js';
 
 export function createApp() {
   const app = express();
@@ -35,6 +36,7 @@ export function createApp() {
     year: currentPastoralYear(),
     legions: LEGIONS.map((id) => ({ id, label: LEGION_LABELS[id] })),
     paymentMode: waveMode(),
+    passwordResetBySms: smsProvider() !== 'disabled',
     responsableSignupOpen: Boolean(config.responsableSignupCode),
   }));
 
@@ -50,11 +52,11 @@ export function createApp() {
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, _req, res, _next) => {
-    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Fichier trop volumineux (5 Mo maximum)' });
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Fichier trop volumineux (4 Mo maximum)' });
     if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'JSON invalide' });
     if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Requête trop volumineuse' });
     const status = err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
-    if (status >= 500) console.error(err);
+    if (status >= 500 && !(err instanceof HttpError)) console.error(err);
     res.status(status).json({
       error: status >= 500 && !(err instanceof HttpError) && status !== 502 ? 'Erreur interne du serveur' : err.message,
       ...(err.details ? { details: err.details } : {}),
