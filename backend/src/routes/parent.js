@@ -6,6 +6,8 @@ import { HttpError, badRequest, notFound, parseBody, parseId } from '../errors.j
 import { childDtoForParent } from '../services/children.js';
 import { ensureYear, resolveYear } from '../services/year.js';
 import { waveMode } from '../services/wave.js';
+import { effectiveAmountSql } from '../services/dues.js';
+import { rateLimitHandler, securityEvent } from '../services/security.js';
 
 const router = Router();
 
@@ -17,13 +19,17 @@ const linkLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Trop de tentatives. Réessayez plus tard.' },
+  handler: rateLimitHandler,
 });
 
 router.post('/link', linkLimiter, async (req, res) => {
   const { code } = parseBody(z.object({ code: z.string().trim().min(4).max(20) }), req.body);
   const normalized = code.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const { rows } = await query('SELECT * FROM children WHERE link_code = $1', [normalized]);
-  if (!rows[0]) throw new HttpError(404, 'Code enfant introuvable. Vérifiez-le auprès du responsable.');
+  if (!rows[0]) {
+    await securityEvent(req, 'link_code_failed', { severity: 'info' });
+    throw new HttpError(404, 'Code enfant introuvable. Vérifiez-le auprès du responsable.');
+  }
   await query('INSERT INTO parent_children (parent_id, child_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [req.user.id, rows[0].id]);
   res.status(201).json({ child: childDtoForParent(rows[0]) });
 });
@@ -81,14 +87,14 @@ router.get('/dues', async (req, res) => {
   await ensureYear(year);
   const { rows } = await query(
     `SELECT c.id AS child_id, c.last_name, c.first_name,
-            d.id AS due_id, d.kind, d.label, d.amount, e.event_date,
+            d.id AS due_id, d.kind, d.label, ${effectiveAmountSql('d', 'c')} AS amount, e.event_date,
             p.status, p.method, p.updated_at
      FROM parent_children pc
      JOIN children c ON c.id = pc.child_id
      CROSS JOIN dues d
      LEFT JOIN events e ON e.id = d.event_id
      LEFT JOIN payments p ON p.due_id = d.id AND p.child_id = c.id
-     WHERE pc.parent_id = $1 AND d.year = $2 AND d.amount IS NOT NULL AND d.amount > 0
+     WHERE pc.parent_id = $1 AND d.year = $2 AND ${effectiveAmountSql('d', 'c')} > 0
      ORDER BY lower(c.last_name), lower(c.first_name),
        CASE d.kind WHEN 'paroissiale' THEN 0 WHEN 'diocesaine' THEN 1 ELSE 2 END, e.position, e.event_date NULLS LAST`,
     [req.user.id, year],

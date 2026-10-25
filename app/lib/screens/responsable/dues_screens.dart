@@ -57,7 +57,7 @@ class _DuesScreenState extends State<DuesScreen> {
                   icon: Icons.church_rounded,
                   color: AppColors.primary,
                   title: 'Cotisation paroissiale',
-                  subtitle: formatMoney(paroisse.amount),
+                  subtitle: paroisse.amountsLabel,
                   paid: paroisse.paidCount,
                   pending: paroisse.pendingCount,
                   onTap: () => _open(DuePaymentsScreen(dueId: paroisse.id)),
@@ -66,15 +66,15 @@ class _DuesScreenState extends State<DuesScreen> {
                   icon: Icons.account_balance_rounded,
                   color: const Color(0xFF7B4BC4),
                   title: 'Cotisation diocésaine',
-                  subtitle: diocese.amount == null ? 'Montant à définir — touchez pour le fixer' : formatMoney(diocese.amount),
+                  subtitle: diocese.hasAmount ? diocese.amountsLabel : 'Montant à définir — touchez pour le fixer',
                   paid: diocese.paidCount,
                   pending: diocese.pendingCount,
                   onTap: () async {
-                    if (diocese.amount == null) {
-                      final amount = await _askAmount(context, title: 'Montant de la cotisation diocésaine', current: null);
-                      if (amount == null || amount < 0 || !context.mounted) return;
+                    if (!diocese.hasAmount) {
+                      final amounts = await askLegionAmounts(context, title: 'Cotisation diocésaine', current: diocese.amounts);
+                      if (amounts == null || !context.mounted) return;
                       try {
-                        await Repo.setDueAmount(diocese.id, amount);
+                        await Repo.setDueAmounts(diocese.id, amounts);
                       } catch (e) {
                         if (context.mounted) showMessage(context, errorText(e), error: true);
                         return;
@@ -150,27 +150,66 @@ class _DueCard extends StatelessWidget {
   }
 }
 
-Future<int?> _askAmount(BuildContext context, {required String title, int? current}) async {
-  final ctrl = TextEditingController(text: current?.toString() ?? '');
-  final ok = await showDialog<bool>(
+/// Saisie des prix d'une cotisation, légion par légion (champ vide = prix non fixé pour cette légion).
+Future<Map<Legion, int?>?> askLegionAmounts(BuildContext context, {required String title, required Map<Legion, int?> current}) {
+  final ctrls = {for (final l in Legion.values) l: TextEditingController(text: current[l]?.toString() ?? '')};
+  final common = TextEditingController();
+  return showModalBottomSheet<Map<Legion, int?>>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(title),
-      content: TextField(
-        controller: ctrl,
-        autofocus: true,
-        keyboardType: TextInputType.number,
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        decoration: const InputDecoration(suffixText: 'F CFA'),
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (ctx) => Padding(
+      padding: EdgeInsets.fromLTRB(20, 0, 20, MediaQuery.viewInsetsOf(ctx).bottom + 20),
+      child: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          const Text('Prix par légion. Laissez vide une légion qui ne paie pas cette cotisation.', style: TextStyle(color: AppColors.muted)),
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: common,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: const InputDecoration(labelText: 'Même prix pour toutes', suffixText: 'F'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.tonal(
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 52)),
+              onPressed: () {
+                for (final c in ctrls.values) {
+                  c.text = common.text.trim();
+                }
+              },
+              child: const Text('Appliquer'),
+            ),
+          ]),
+          const Divider(height: 28),
+          for (final l in Legion.values)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: TextField(
+                controller: ctrls[l],
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: InputDecoration(
+                  labelText: l.label,
+                  prefixIcon: Icon(l.icon, color: l.color),
+                  suffixText: 'F CFA',
+                ),
+              ),
+            ),
+          const SizedBox(height: 8),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, {for (final l in Legion.values) l: int.tryParse(ctrls[l]!.text.trim())}),
+            child: const Text('Enregistrer les prix'),
+          ),
+        ]),
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
-        FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(0, 44)), onPressed: () => Navigator.pop(ctx, true), child: const Text('Valider')),
-      ],
     ),
   );
-  if (ok != true) return null;
-  return int.tryParse(ctrl.text.trim()) ?? -1;
 }
 
 /// Liste des activités de l'année avec leur prix.
@@ -188,10 +227,10 @@ class _ActivityDuesScreenState extends State<ActivityDuesScreen> {
   void _reload() => setState(() => _future = _load());
 
   Future<void> _setPrice(Due d) async {
-    final amount = await _askAmount(context, title: 'Prix — ${d.label}', current: d.amount);
-    if (amount == null) return;
+    final amounts = await askLegionAmounts(context, title: d.label, current: d.amounts);
+    if (amounts == null) return;
     try {
-      await Repo.setDueAmount(d.id, amount < 0 ? null : amount);
+      await Repo.setDueAmounts(d.id, amounts);
       _reload();
     } catch (e) {
       if (mounted) showMessage(context, errorText(e), error: true);
@@ -220,7 +259,7 @@ class _ActivityDuesScreenState extends State<ActivityDuesScreen> {
           children: [
             const Padding(
               padding: EdgeInsets.only(bottom: 12, left: 4),
-              child: Text('Fixez le prix de chaque activité : il sera affiché aux parents avec le bouton « Payer la cotisation ».',
+              child: Text('Fixez le prix de chaque activité pour chaque légion : chaque parent voit le prix de la légion de son enfant avec le bouton « Payer la cotisation ».',
                   style: TextStyle(color: AppColors.muted)),
             ),
             for (final d in dues)
@@ -237,8 +276,8 @@ class _ActivityDuesScreenState extends State<ActivityDuesScreen> {
                     title: Text(d.label, style: const TextStyle(fontWeight: FontWeight.w700)),
                     subtitle: Text('${formatDate(d.eventDate)} · ${d.paidCount} payé(s)${d.pendingCount > 0 ? ' · ${d.pendingCount} à confirmer' : ''}'),
                     trailing: ActionChip(
-                      avatar: Icon(d.amount == null ? Icons.edit_rounded : Icons.sell_rounded, size: 18),
-                      label: Text(d.amount == null ? 'Fixer le prix' : formatMoney(d.amount)),
+                      avatar: Icon(d.hasAmount ? Icons.sell_rounded : Icons.edit_rounded, size: 18),
+                      label: Text(d.hasAmount ? _short(d) : 'Fixer le prix'),
                       onPressed: () => _setPrice(d),
                     ),
                   ),
@@ -291,10 +330,10 @@ class _DuePaymentsScreenState extends State<DuePaymentsScreen> {
   }
 
   Future<void> _editAmount(Due due) async {
-    final amount = await _askAmount(context, title: 'Montant — ${due.label}', current: due.amount);
-    if (amount == null) return;
+    final amounts = await askLegionAmounts(context, title: due.label, current: due.amounts);
+    if (amounts == null) return;
     try {
-      await Repo.setDueAmount(due.id, amount < 0 ? null : amount);
+      await Repo.setDueAmounts(due.id, amounts);
       _reload();
     } catch (e) {
       if (mounted) showMessage(context, errorText(e), error: true);
@@ -327,10 +366,10 @@ class _DuePaymentsScreenState extends State<DuePaymentsScreen> {
                 title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(due?.label ?? 'Cotisation', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
                   if (due != null)
-                    Text(formatMoney(due.amount), style: const TextStyle(fontSize: 13, color: AppColors.muted, fontWeight: FontWeight.w500)),
+                    Text(due.amountsLabel, style: const TextStyle(fontSize: 13, color: AppColors.muted, fontWeight: FontWeight.w500)),
                 ]),
                 actions: [
-                  if (due != null) IconButton(tooltip: 'Modifier le montant', onPressed: () => _editAmount(due), icon: const Icon(Icons.edit_rounded)),
+                  if (due != null) IconButton(tooltip: 'Prix par légion', onPressed: () => _editAmount(due), icon: const Icon(Icons.edit_rounded)),
                 ],
                 bottom: TabBar(
                   isScrollable: true,
@@ -355,7 +394,12 @@ class _DuePaymentsScreenState extends State<DuePaymentsScreen> {
                   : !snap.hasData
                       ? const LoadingView()
                       : TabBarView(children: [
-                          for (final l in tabs) _PaymentList(entries: entries.where((e) => e.child.legion == l).toList(), onToggle: _toggle),
+                          for (final l in tabs)
+                            _PaymentList(
+                              entries: entries.where((e) => e.child.legion == l).toList(),
+                              amount: l == null ? null : due!.amounts[l],
+                              onToggle: _toggle,
+                            ),
                         ]),
             ),
           );
@@ -366,8 +410,9 @@ class _DuePaymentsScreenState extends State<DuePaymentsScreen> {
 }
 
 class _PaymentList extends StatelessWidget {
-  const _PaymentList({required this.entries, required this.onToggle});
+  const _PaymentList({required this.entries, required this.amount, required this.onToggle});
   final List<PaymentEntry> entries;
+  final int? amount;
   final void Function(PaymentEntry, bool) onToggle;
 
   @override
@@ -377,7 +422,10 @@ class _PaymentList extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
-        Text('$paid / ${entries.length} ont payé', style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.muted)),
+        Row(children: [
+          Expanded(child: Text('$paid / ${entries.length} ont payé', style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.muted))),
+          StatusPill(label: 'Prix : ${formatMoney(amount)}', color: amount == null ? AppColors.warning : AppColors.primary),
+        ]),
         const SizedBox(height: 8),
         for (final e in entries)
           Padding(
@@ -402,4 +450,12 @@ class _PaymentList extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Libellé court pour la puce de prix d'une activité.
+String _short(Due d) {
+  final v = d.amounts.values.whereType<int>().toList()..sort();
+  if (d.amount != null) return formatMoney(d.amount);
+  final range = v.first == v.last ? formatMoney(v.first) : '${v.first} à ${formatMoney(v.last)}';
+  return v.length < Legion.values.length ? '$range · partiel' : range;
 }

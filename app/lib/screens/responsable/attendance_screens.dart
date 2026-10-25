@@ -106,7 +106,8 @@ class _EventCard extends StatelessWidget {
 /// Création / modification d'une activité ou d'une réunion.
 Future<EventItem?> showEventDialog(BuildContext context, {required String kind, EventItem? event}) {
   final name = TextEditingController(text: event?.name ?? (kind == 'reunion' ? 'Réunion' : ''));
-  final price = TextEditingController(text: event?.price?.toString() ?? '');
+  final initialPrice = event?.price?.toString() ?? '';
+  final price = TextEditingController(text: initialPrice);
   String? date = event?.date ?? (kind == 'reunion' ? DateTime.now().toIso8601String().substring(0, 10) : null);
   var busy = false;
   return showModalBottomSheet<EventItem>(
@@ -143,7 +144,13 @@ Future<EventItem?> showEventDialog(BuildContext context, {required String kind, 
             TextField(
               controller: price,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Prix de la cotisation (F CFA)'),
+              decoration: InputDecoration(
+                labelText: 'Prix, identique pour toutes les légions (F CFA)',
+                helperText: event?.hasLegionPrices == true
+                    ? 'Prix différents selon la légion : laissez vide pour les garder.'
+                    : 'Pour un prix par légion : Cotisations › Cotisation des activités.',
+                helperMaxLines: 2,
+              ),
             ),
           ],
           const SizedBox(height: 20),
@@ -160,7 +167,8 @@ Future<EventItem?> showEventDialog(BuildContext context, {required String kind, 
                           : await Repo.updateEvent(event.id, {
                               'name': name.text.trim(),
                               'date': date,
-                              if (kind == 'activite') 'price': p,
+                              // Le prix n'est envoyé que s'il a été modifié (sinon les prix par légion seraient effacés).
+                              if (kind == 'activite' && price.text.trim() != initialPrice) 'price': p,
                             });
                       if (ctx.mounted) Navigator.pop(ctx, saved);
                     } catch (e) {

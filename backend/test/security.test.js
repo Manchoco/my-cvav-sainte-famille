@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import JSZip from 'jszip';
-import { freshApp, register, pool } from './helpers.js';
+import { freshApp, register, pool, consoleOutbox } from './helpers.js';
 
 let api;
 let admin;
@@ -25,14 +25,20 @@ const SQLI = [
   '\\\'; SELECT 1; --',
 ];
 
+// Connexion ; pour un administrateur, lit le code SMS (fournisseur « console » en test) et le valide.
 async function login(phone, password) {
-  const res = await api.post('/api/auth/login').send({ phone, password });
+  let res = await api.post('/api/auth/login').send({ phone, password });
+  if (res.status === 200 && res.body.twoFactorRequired) {
+    const code = consoleOutbox.at(-1).message.match(/\b(\d{6})\b/)[1];
+    res = await api.post('/api/auth/login/verify').send({ challengeId: res.body.challengeId, code });
+  }
   return { res, auth: { Authorization: `Bearer ${res.body.token}` } };
 }
 
 before(async () => {
   api = await freshApp();
   const hash = await bcrypt.hash('admin-pass-123', 10);
+  // Numéro mobile valide : le code de vérification administrateur est envoyé par SMS.
   await pool.query(`INSERT INTO users (role, full_name, phone, password_hash) VALUES ('admin', 'Admin', '0100000000', $1)`, [hash]);
   admin = (await login('0100000000', 'admin-pass-123')).auth;
   resp = await register(api, { role: 'responsable', phone: '0700000001', name: 'Resp' });

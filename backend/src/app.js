@@ -15,6 +15,7 @@ import paymentsRoutes from './routes/payments.js';
 import statsRoutes from './routes/stats.js';
 import adminRoutes from './routes/admin.js';
 import { getSettings } from './services/settings.js';
+import { blockIpGuard, detectInjection, purgeOldSecurityEvents, rateLimitHandler } from './services/security.js';
 import { LEGIONS, LEGION_LABELS, currentPastoralYear } from './domain.js';
 import { waveMode } from './services/wave.js';
 import { smsProvider } from './services/sms.js';
@@ -27,11 +28,17 @@ export function createApp() {
   app.use(helmet());
   // L'application mobile n'envoie pas d'en-tête Origin ; CORS ne concerne qu'un éventuel client web.
   app.use(cors({ origin: config.corsOrigins.length ? config.corsOrigins : false }));
-  app.use(rateLimit({ windowMs: 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
+  app.use(blockIpGuard);
+  app.use(rateLimit({
+    windowMs: 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false,
+    message: { error: 'Trop de requêtes, réessayez dans une minute' }, handler: rateLimitHandler,
+  }));
 
   // Le webhook Wave lit le corps brut : il est monté avant express.json().
   app.use('/api/payments', paymentsRoutes);
   app.use(express.json({ limit: '2mb' }));
+  app.use(detectInjection);
+  app.use((_req, _res, next) => { purgeOldSecurityEvents().catch(() => {}); next(); });
 
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
   app.get('/api/meta', async (_req, res) => {

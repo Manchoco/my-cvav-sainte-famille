@@ -47,8 +47,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     if (!_form.currentState!.validate()) return;
     setState(() => _busy = true);
     try {
-      await context.read<Session>().resetPassword(_phone.text, _code.text.trim(), _password.text);
+      final loggedIn = await context.read<Session>().resetPassword(_phone.text, _code.text.trim(), _password.text);
       if (!mounted) return;
+      if (!loggedIn) {
+        showMessage(context, 'Mot de passe modifié. Connectez-vous : un code de vérification vous sera envoyé par SMS.');
+        Navigator.pop(context);
+        return;
+      }
       showMessage(context, 'Mot de passe modifié. Bienvenue !');
       Navigator.of(context).popUntil((r) => r.isFirst);
     } catch (e) {

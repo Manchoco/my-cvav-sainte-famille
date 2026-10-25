@@ -11,12 +11,15 @@ const { migrate } = await import('../src/migrate.js');
 const { createApp } = await import('../src/app.js');
 const { resetYearCache } = await import('../src/services/year.js');
 const { resetSettingsCache } = await import('../src/services/settings.js');
+const { resetBlockedCache } = await import('../src/services/security.js');
+const { consoleOutbox } = await import('../src/services/sms.js');
 const supertest = (await import('supertest')).default;
 
 export async function freshApp() {
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   resetYearCache();
   resetSettingsCache();
+  resetBlockedCache();
   await migrate();
   return supertest(createApp());
 }
@@ -30,4 +33,4 @@ export async function register(api, { role = 'parent', phone, name = 'Test User'
   return { token: res.body.token, user: res.body.user, auth: { Authorization: `Bearer ${res.body.token}` } };
 }
 
-export { pool };
+export { pool, consoleOutbox };

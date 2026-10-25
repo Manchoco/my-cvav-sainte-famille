@@ -9,6 +9,8 @@ import { HttpError, badRequest, notFound, parseBody, parseId } from '../errors.j
 import { audit } from '../services/audit.js';
 import { getSettings, setSetting } from '../services/settings.js';
 import { publicUser } from './auth.js';
+import { isIP } from 'node:net';
+import { clientIp, resetBlockedCache, securityOverview } from '../services/security.js';
 
 const router = Router();
 const ROLES = ['parent', 'responsable', 'admin'];
@@ -110,6 +112,8 @@ router.post('/users', async (req, res) => {
 
 const updateSchema = z.object({
   role: z.enum(ROLES).optional(),
+  // Exigé pour nommer un nouvel administrateur.
+  confirmPassword: z.string().max(128).optional(),
   legion: z.enum(LEGIONS).nullable().optional(),
   disabled: z.boolean().optional(),
   fullName: z.string().trim().min(2).max(120).optional(),
@@ -119,6 +123,13 @@ router.patch('/users/:id', async (req, res) => {
   const id = parseId(req.params.id);
   const data = parseBody(updateSchema, req.body);
   const user = await loadUser(id);
+  if (data.role === 'admin' && user.role !== 'admin') {
+    const { rows: me } = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    if (!data.confirmPassword || !(await bcrypt.compare(data.confirmPassword, me[0].password_hash))) {
+      throw badRequest('Confirmez avec votre mot de passe pour nommer un administrateur');
+    }
+  }
+  delete data.confirmPassword;
   if (id === req.user.id && (data.role && data.role !== 'admin' || data.disabled)) {
     throw badRequest('Vous ne pouvez pas retirer vos propres droits ni désactiver votre compte');
   }
@@ -202,6 +213,43 @@ router.post('/settings/signup-code', async (req, res) => {
   await setSetting('signup_code', { code }, req.user.id);
   await audit(req, 'signup_code.rotate');
   res.json({ signupCode: code });
+});
+
+// ----- Sécurité : activités suspectes, menaces et remèdes -----
+
+router.get('/security', async (req, res) => {
+  res.json(await securityOverview(clientIp(req)));
+});
+
+const blockSchema = z.object({
+  ip: z.string().trim().max(64).transform((v) => (v.startsWith('::ffff:') ? v.slice(7) : v))
+    .refine((v) => isIP(v) !== 0, 'Adresse IP invalide'),
+  hours: z.number().int().min(1).max(24 * 365).nullable().default(24),
+  reason: z.string().trim().max(200).optional(),
+});
+
+router.post('/security/block', async (req, res) => {
+  const data = parseBody(blockSchema, req.body);
+  if (data.ip === clientIp(req)) throw badRequest('Impossible de bloquer votre propre adresse IP');
+  await query(
+    `INSERT INTO blocked_ips (ip, reason, blocked_by, expires_at)
+     VALUES ($1, $2, $3, CASE WHEN $4::int IS NULL THEN NULL ELSE now() + make_interval(hours => $4::int) END)
+     ON CONFLICT (ip) DO UPDATE SET reason = EXCLUDED.reason, blocked_by = EXCLUDED.blocked_by,
+       created_at = now(), expires_at = EXCLUDED.expires_at`,
+    [data.ip, data.reason ?? null, req.user.id, data.hours],
+  );
+  resetBlockedCache();
+  await audit(req, 'security.block_ip', `ip:${data.ip}`, { hours: data.hours, reason: data.reason });
+  res.status(201).json({ blocked: data.ip });
+});
+
+router.delete('/security/block/:ip', async (req, res) => {
+  const ip = String(req.params.ip).slice(0, 64);
+  const { rowCount } = await query('DELETE FROM blocked_ips WHERE ip = $1', [ip]);
+  if (!rowCount) throw notFound('Adresse non bloquée');
+  resetBlockedCache();
+  await audit(req, 'security.unblock_ip', `ip:${ip}`);
+  res.status(204).end();
 });
 
 // ----- Journal -----

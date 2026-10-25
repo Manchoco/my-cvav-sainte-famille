@@ -50,6 +50,8 @@ alerte si l'on quitte sans enregistrer.
 | `src/routes/admin.js` | Administration (rôle `admin` uniquement) |
 | `src/services/settings.js` | Réglages en base : maintenance, version minimale, code d'accès responsable |
 | `src/services/audit.js` | Journal des actions sensibles |
+| `src/services/security.js` | Surveillance : événements suspects, détection d'injections, blocage d'IP, analyse des menaces |
+| `src/services/dues.js` | Prix des cotisations par légion |
 | `src/create-admin.js` | `npm run create-admin` : crée/réinitialise un administrateur |
 | `src/services/year.js` | Année pastorale (sept.→août), création des cotisations et activités par défaut |
 
@@ -62,16 +64,21 @@ children(id, last_name, first_name, birth_date, age, legion, parent_name, parent
 parent_children(parent_id → users, child_id → children)            -- lien établi par code enfant
 events(id, kind[activite|reunion], name, event_date, year, position)
 attendance(event_id → events, child_id → children, status[present|absent], marked_by → users)
-dues(id, kind[paroissiale|diocesaine|activite], year, event_id → events, label, amount)
+dues(id, kind[paroissiale|diocesaine|activite], year, event_id → events, label, amount)   -- amount = prix commun
+due_legion_amounts(due_id → dues, legion, amount)                   -- prix propre à une légion (prioritaire)
 payments(due_id → dues, child_id → children, status[pending|paid], method[manuel|wave|wave_declare], amount, reference)
 wave_sessions(id, due_id, child_id, parent_id, amount, status)
 password_resets(id, user_id, code_hash, expires_at, attempts, used_at)
 posts(id, title, body, pinned, created_by)
 app_settings(key, value JSONB, updated_by, updated_at)            -- maintenance, app_update, signup_code
 audit_log(id, actor_id, action, target, details JSONB, ip, created_at)
+security_events(id, type, severity[info|warning|critical], ip, user_id, phone, path, details, created_at)  -- 90 jours
+blocked_ips(ip, reason, blocked_by, expires_at)
+login_challenges(id, user_id, code_hash, attempts, expires_at, used_at)  -- code SMS de connexion admin
 ```
 
-Une cotisation non payée n'a pas de ligne dans `payments`. Le prix d'une activité est porté par sa ligne `dues`.
+Une cotisation non payée n'a pas de ligne dans `payments`. Montant dû par un enfant = prix de sa légion, sinon prix commun ;
+le montant réellement payé est figé dans `payments.amount` (changer un prix ne modifie pas l'historique).
 
 ### Endpoints
 
@@ -81,7 +88,8 @@ Toutes les routes sont préfixées par `/api`. 🔒R = responsable (ou admin), �
 |---|---|---|---|
 | GET | `/health`, `/meta` | public | État, année en cours, légions, mode de paiement |
 | POST | `/auth/register` | public | Création de compte (code d'accès requis pour un responsable) |
-| POST | `/auth/login` | public | Connexion par téléphone + mot de passe |
+| POST | `/auth/login` | public | Connexion par téléphone + mot de passe (admin : renvoie `twoFactorRequired` + `challengeId`) |
+| POST | `/auth/login/verify` | public | Administrateur : code SMS à 6 chiffres → session (12 h) |
 | GET/PUT | `/auth/me` | 🔒 | Profil / modifier nom et téléphone (mot de passe actuel requis) |
 | POST | `/auth/password`, `/auth/logout-all` | 🔒 | Changer le mot de passe / déconnecter tous les appareils |
 | POST | `/auth/password/forgot` | public | Envoie un code SMS (réponse identique si le numéro est inconnu) |
@@ -95,7 +103,7 @@ Toutes les routes sont préfixées par `/api`. 🔒R = responsable (ou admin), �
 | PUT/DELETE | `/events/:id` | 🔒R | Intitulé, date, prix / suppression |
 | GET/PUT | `/events/:id/attendance` | 🔒R | Feuille d'appel / enregistrement groupé |
 | GET | `/dues` | 🔒R | Cotisations de l'année avec totaux |
-| PUT | `/dues/:id` | 🔒R | Montant |
+| PUT | `/dues/:id` | 🔒R | Prix par légion `{amounts: {meneurs, aines, cadets, benjamins}}` (ancien format `{amount}` accepté) |
 | GET/PUT | `/dues/:id/payments` | 🔒R | Enfants payé / non payé / à confirmer ; cochage groupé |
 | GET | `/stats` | 🔒R | Tableau de bord |
 | GET | `/posts` | 🔒 | Informations |
@@ -116,6 +124,8 @@ Toutes les routes sont préfixées par `/api`. 🔒R = responsable (ou admin), �
 | PUT | `/admin/settings/maintenance`, `/admin/settings/app-update` | 🔒A | Mode maintenance / version minimale et lien de mise à jour |
 | POST | `/admin/settings/signup-code` | 🔒A | Nouveau code d'accès responsable |
 | GET | `/admin/audit` | 🔒A | Journal |
+| GET | `/admin/security` | 🔒A | Menaces détectées, remèdes, adresses actives, journal de sécurité |
+| POST / DELETE | `/admin/security/block[/:ip]` | 🔒A | Bloquer (24 h, 7 j, définitif) / débloquer une adresse IP |
 
 Garde-fous : impossible de se rétrograder ou se désactiver soi-même, ni de retirer le dernier administrateur.
 En maintenance, seuls les administrateurs peuvent se connecter et utiliser l'API (503 pour les autres).

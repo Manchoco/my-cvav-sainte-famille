@@ -13,6 +13,10 @@
 ![Mot de passe oublié](captures/05-mot-de-passe-oublie.png)
 Lien sous « Se connecter » → numéro → code reçu par SMS → nouveau mot de passe → connecté directement.
 
+## Cotisations : prix par légion
+Pour chaque cotisation (paroissiale, diocésaine, chaque activité), le responsable fixe un prix par légion (bouton crayon,
+ou « Même prix pour toutes »). Chaque parent voit et paie le prix de la légion de son enfant.
+
 ## Responsable — barre du bas : Accueil · Enfants · Présences · Cotisations · Infos
 
 **Accueil** : effectif total et par légion, total des cotisations reçues, paiements Wave à confirmer, dernier
@@ -64,10 +68,14 @@ la date et le responsable qui a pointé ; filtre par enfant ; compteurs et taux 
 4. **Annonces** des responsables.
 
 ## Administrateur — carte « Administration » sur l'accueil
-L'administrateur a tous les écrans du responsable, plus l'**Administration** (4 onglets) :
+Connexion : mot de passe, puis code à 6 chiffres reçu par SMS.
+
+L'administrateur a tous les écrans du responsable, plus l'**Administration** (5 onglets) :
 - **Comptes** : recherche, filtre par rôle ; créer un compte (mot de passe provisoire à transmettre, changement imposé
   à la première connexion) ; pour chaque compte : rôle, légion, actif/désactivé, nouveau mot de passe provisoire,
   déconnecter ses appareils, supprimer.
+- **Sécurité** : état général (aucune menace / activité suspecte / menace sérieuse), compteurs des dernières 24 h,
+  menaces avec « Que faire » et bouton Bloquer l'adresse / Ouvrir le compte, adresses bloquées, journal de sécurité.
 - **Maintenance** : activer le mode maintenance avec un message (tous les téléphones affichent l'écran de maintenance ;
   seul l'administrateur peut encore se connecter via « Connexion administrateur »). Publier une mise à jour : numéro de
   version, version minimale obligatoire, lien de téléchargement et notes.

@@ -23,6 +23,23 @@ enum Legion {
 final _money = NumberFormat.decimalPattern('fr_FR');
 String formatMoney(num? amount) => amount == null ? 'À définir' : '${_money.format(amount)} F CFA';
 
+/// Prix par légion lus depuis l'API ({"meneurs": 1500, ...}).
+Map<Legion, int?> parseLegionAmounts(Object? json, int? fallback) {
+  final m = json is Map ? json : const {};
+  return {for (final l in Legion.values) l: (m[l.name] as int?) ?? (json == null ? fallback : null)};
+}
+
+/// « 1 500 F CFA » si le prix est le même pour toutes les légions, sinon « 1 000 à 3 000 F CFA ».
+String formatLegionAmounts(Map<Legion, int?> amounts) {
+  final values = amounts.values.whereType<int>().toList();
+  if (values.isEmpty) return 'À définir';
+  final min = values.reduce((a, b) => a < b ? a : b);
+  final max = values.reduce((a, b) => a > b ? a : b);
+  final missing = values.length < Legion.values.length;
+  if (min == max && !missing) return formatMoney(min);
+  return '${min == max ? formatMoney(min) : '${_money.format(min)} à ${formatMoney(max)}'} selon la légion';
+}
+
 String formatDate(String? iso, {String pattern = 'd MMM yyyy'}) {
   if (iso == null || iso.isEmpty) return 'Date à préciser';
   final d = DateTime.tryParse(iso);
@@ -144,7 +161,11 @@ class ImportRow {
 }
 
 class EventItem {
-  EventItem({required this.id, required this.kind, required this.name, this.date, this.price, this.dueId, this.present = 0, this.absent = 0});
+  EventItem({required this.id, required this.kind, required this.name, this.date, this.price, this.dueId, this.present = 0, this.absent = 0,
+      this.pricesByLegion = const {}});
+  /// Prix différents selon la légion (réglés dans Cotisations).
+  final Map<Legion, int?> pricesByLegion;
+  bool get hasLegionPrices => price == null && pricesByLegion.values.any((v) => v != null);
   final int id;
   final String kind;
   final String name;
@@ -162,6 +183,7 @@ class EventItem {
         name: j['name'] as String,
         date: j['date'] as String?,
         price: j['price'] as int?,
+        pricesByLegion: parseLegionAmounts(j['pricesByLegion'], j['price'] as int?),
         dueId: j['dueId'] as int?,
         present: j['present'] as int? ?? 0,
         absent: j['absent'] as int? ?? 0,
@@ -182,11 +204,17 @@ class AttendanceEntry {
 }
 
 class Due {
-  Due({required this.id, required this.kind, required this.label, this.amount, this.eventId, this.eventDate, this.paidCount = 0, this.pendingCount = 0, this.collected = 0});
+  Due({required this.id, required this.kind, required this.label, this.amount, required this.amounts, this.eventId, this.eventDate,
+      this.paidCount = 0, this.pendingCount = 0, this.collected = 0});
   final int id;
   final String kind;
   final String label;
+  /// Montant unique (null si les prix diffèrent selon la légion).
   final int? amount;
+  /// Prix par légion.
+  final Map<Legion, int?> amounts;
+  bool get hasAmount => amounts.values.any((v) => v != null);
+  String get amountsLabel => formatLegionAmounts(amounts);
   final int? eventId;
   final String? eventDate;
   final int paidCount;
@@ -198,6 +226,7 @@ class Due {
         kind: j['kind'] as String,
         label: j['label'] as String,
         amount: j['amount'] as int?,
+        amounts: parseLegionAmounts(j['amounts'], j['amount'] as int?),
         eventId: j['eventId'] as int?,
         eventDate: j['eventDate'] as String?,
         paidCount: j['paidCount'] as int? ?? 0,
@@ -207,8 +236,10 @@ class Due {
 }
 
 class PaymentEntry {
-  PaymentEntry({required this.child, required this.status, this.method, this.updatedBy});
+  PaymentEntry({required this.child, required this.status, this.method, this.updatedBy, this.amount});
   final Child child;
+  /// Montant dû (ou payé) par cet enfant.
+  final int? amount;
   String status; // unpaid | pending | paid
   final String? method;
   final String? updatedBy;
@@ -220,6 +251,7 @@ class PaymentEntry {
         status: j['status'] as String,
         method: j['method'] as String?,
         updatedBy: j['updatedBy'] as String?,
+        amount: j['amount'] as int?,
       );
 }
 

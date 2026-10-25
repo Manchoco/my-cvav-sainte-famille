@@ -10,8 +10,8 @@ class AppConfig {
     defaultValue: 'https://my-cvav-sainte-famille-api-mamadoudibate-5976.vercel.app',
   );
   /// Numéro de build de cet APK (fourni par la compilation, cf. pubspec.yaml), pour les mises à jour.
-  static const int appBuild = int.fromEnvironment('APP_BUILD', defaultValue: 2);
-  static const String appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '1.1.0');
+  static const int appBuild = int.fromEnvironment('APP_BUILD', defaultValue: 3);
+  static const String appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '1.2.0');
 
   /// Changer de serveur n'est possible qu'en développement : en production, un tiers ne peut pas
   /// faire pointer l'application vers un faux serveur pour récupérer des mots de passe.

@@ -40,7 +40,7 @@ class WelcomeScreen extends StatelessWidget {
                   style: TextStyle(fontSize: 32, height: 1.1, fontWeight: FontWeight.w900, color: AppColors.navy)),
               const SizedBox(height: 10),
               const Text(
-                'Cœurs Vaillants – Âmes Vaillantes\nPrésences, cotisations et informations au même endroit.',
+                'Cœurs Vaillants – Âmes Vaillantes',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppColors.muted, fontSize: 15, height: 1.4),
               ),
@@ -60,7 +60,6 @@ class WelcomeScreen extends StatelessWidget {
                 icon: Icons.groups_rounded,
                 color: AppColors.primary,
                 title: 'Responsable',
-                subtitle: 'Enfants, présences, cotisations et informations',
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AuthScreen(role: 'responsable'))),
               ),
               const SizedBox(height: 12),
@@ -68,7 +67,6 @@ class WelcomeScreen extends StatelessWidget {
                 icon: Icons.family_restroom_rounded,
                 color: AppColors.gold,
                 title: 'Parent',
-                subtitle: 'Présences de mes enfants, informations et paiement Wave',
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AuthScreen(role: 'parent'))),
               ),
               const SizedBox(height: 32),
@@ -83,11 +81,10 @@ class WelcomeScreen extends StatelessWidget {
 }
 
 class _RoleCard extends StatelessWidget {
-  const _RoleCard({required this.icon, required this.color, required this.title, required this.subtitle, required this.onTap});
+  const _RoleCard({required this.icon, required this.color, required this.title, required this.onTap});
   final IconData icon;
   final Color color;
   final String title;
-  final String subtitle;
   final VoidCallback onTap;
 
   @override
@@ -107,11 +104,7 @@ class _RoleCard extends StatelessWidget {
             ),
             const SizedBox(width: 16),
             Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-                const SizedBox(height: 2),
-                Text(subtitle, style: const TextStyle(color: AppColors.muted, fontSize: 13)),
-              ]),
+              child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
             ),
             const Icon(Icons.arrow_forward_ios_rounded, size: 18, color: AppColors.muted),
           ]),

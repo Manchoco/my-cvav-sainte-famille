@@ -62,7 +62,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: ListTile(
                         leading: const Icon(Icons.shield_rounded, color: AppColors.danger),
                         title: const Text('Administration', style: TextStyle(fontWeight: FontWeight.w800)),
-                        subtitle: const Text('Comptes, maintenance, mises à jour, code d\'accès, journal'),
+                        subtitle: const Text('Comptes, sécurité, maintenance, mises à jour, journal'),
                         trailing: const Icon(Icons.chevron_right_rounded),
                         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminScreen())),
                       ),

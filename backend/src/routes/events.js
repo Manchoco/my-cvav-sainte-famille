@@ -5,6 +5,7 @@ import { LEGIONS } from '../domain.js';
 import { badRequest, notFound, parseBody, parseId } from '../errors.js';
 import { childDto } from '../services/children.js';
 import { ensureYear, resolveYear } from '../services/year.js';
+import { amountsByLegion, legionAmountsSql, uniformAmount } from '../services/dues.js';
 
 const router = Router();
 
@@ -15,7 +16,9 @@ export function eventDto(r) {
     name: r.name,
     date: r.event_date,
     year: r.year,
-    price: r.amount ?? null,
+    // Prix unique de l'activité (null si les prix diffèrent selon la légion : voir pricesByLegion).
+    price: uniformAmount(amountsByLegion(r.amount, r.legion_amounts)),
+    pricesByLegion: amountsByLegion(r.amount, r.legion_amounts),
     dueId: r.due_id ?? null,
     present: r.present != null ? Number(r.present) : undefined,
     absent: r.absent != null ? Number(r.absent) : undefined,
@@ -23,7 +26,7 @@ export function eventDto(r) {
 }
 
 const EVENT_SELECT = `
-  SELECT e.*, d.id AS due_id, d.amount,
+  SELECT e.*, d.id AS due_id, d.amount, ${legionAmountsSql('d')} AS legion_amounts,
     (SELECT count(*) FROM attendance a WHERE a.event_id = e.id AND a.status = 'present') AS present,
     (SELECT count(*) FROM attendance a WHERE a.event_id = e.id AND a.status = 'absent') AS absent
   FROM events e LEFT JOIN dues d ON d.event_id = e.id`;
@@ -93,7 +96,11 @@ router.put('/:id', async (req, res) => {
     );
     if (!rows[0]) throw notFound('Activité introuvable');
     if (rows[0].kind === 'activite') {
-      if ('price' in data) await client.query('UPDATE dues SET amount = $2 WHERE event_id = $1', [id, data.price ?? null]);
+      if ('price' in data) {
+        // Prix unique : remplace les éventuels prix par légion.
+        const { rows: d } = await client.query('UPDATE dues SET amount = $2 WHERE event_id = $1 RETURNING id', [id, data.price ?? null]);
+        if (d[0]) await client.query('DELETE FROM due_legion_amounts WHERE due_id = $1', [d[0].id]);
+      }
       if (data.name) await client.query('UPDATE dues SET label = $2 WHERE event_id = $1', [id, data.name]);
     }
   });

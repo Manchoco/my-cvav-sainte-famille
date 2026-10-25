@@ -22,6 +22,9 @@ export const config = {
   databaseSsl: env.DATABASE_SSL === 'true',
   jwtSecret,
   jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
+  adminJwtExpiresIn: env.ADMIN_JWT_EXPIRES_IN || '12h',
+  // Double vérification par SMS des connexions administrateur (désactivable en urgence : ADMIN_2FA=off).
+  adminTwoFactor: (env.ADMIN_2FA || 'on').toLowerCase() !== 'off',
   // Sans ce code, l'inscription des responsables est fermée (sécurité par défaut).
   responsableSignupCode: env.RESPONSABLE_SIGNUP_CODE || '',
   trustProxy: env.TRUST_PROXY ? Number(env.TRUST_PROXY) : (env.VERCEL ? 1 : false),

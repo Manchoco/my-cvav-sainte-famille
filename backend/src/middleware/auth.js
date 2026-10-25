@@ -3,10 +3,12 @@ import { config } from '../config.js';
 import { query } from '../db.js';
 import { HttpError, forbidden } from '../errors.js';
 import { getSettings } from '../services/settings.js';
+import { securityEvent } from '../services/security.js';
 
+// Session administrateur volontairement courte (12 h) : un téléphone perdu ou volé expose moins longtemps.
 export function signToken(user) {
   return jwt.sign({ sub: String(user.id), tv: user.token_version }, config.jwtSecret, {
-    expiresIn: config.jwtExpiresIn,
+    expiresIn: user.role === 'admin' ? config.adminJwtExpiresIn : config.jwtExpiresIn,
     algorithm: 'HS256',
   });
 }
@@ -30,7 +32,9 @@ export async function authenticate(req, _res, next) {
     try {
       // Algorithme imposé : refuse "none" et toute confusion d'algorithme.
       payload = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
-    } catch {
+    } catch (err) {
+      // Une session expirée est normale ; un jeton mal signé ou fabriqué ne l'est pas.
+      if (err.name !== 'TokenExpiredError') securityEvent(req, 'invalid_token', { details: { raison: err.message.slice(0, 80) } });
       throw new HttpError(401, 'Session expirée, veuillez vous reconnecter');
     }
     const id = Number(payload.sub);
@@ -42,7 +46,10 @@ export async function authenticate(req, _res, next) {
     );
     const user = rows[0];
     if (!user || user.token_version !== payload.tv) throw new HttpError(401, 'Session expirée, veuillez vous reconnecter');
-    if (user.disabled) throw new HttpError(403, 'Ce compte a été désactivé. Contactez l\'administrateur.');
+    if (user.disabled) {
+      securityEvent(req, 'disabled_account', { userId: user.id });
+      throw new HttpError(403, 'Ce compte a été désactivé. Contactez l\'administrateur.');
+    }
     if (user.role !== 'admin') {
       const { maintenance } = await getSettings();
       if (maintenance.enabled) throw new MaintenanceError(maintenance.message);
@@ -65,5 +72,6 @@ export const requireRole = (...roles) => (req, _res, next) => {
   const role = req.user?.role;
   if (!role) return next(forbidden());
   if (roles.includes(role) || (role === 'admin' && roles.includes('responsable'))) return next();
+  securityEvent(req, 'forbidden', { severity: roles.includes('admin') ? 'critical' : 'warning', details: { role, requis: roles } });
   next(forbidden());
 };

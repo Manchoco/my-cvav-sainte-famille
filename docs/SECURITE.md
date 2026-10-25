@@ -43,6 +43,13 @@ visent à limiter qui peut voir quoi.
 - Mode lien marchand : le parent ne peut que **déclarer** (« à confirmer ») ; un responsable valide.
 
 ## Administration et maintenance
+- **Double vérification** : après le mot de passe, un code à 6 chiffres est envoyé par SMS au numéro de l'administrateur
+  (5 min, usage unique, 5 essais, 5 codes / 15 min). Sans le téléphone, pas d'accès, même avec le mot de passe.
+- Session administrateur limitée à **12 h** ; mot de passe administrateur : **12 caractères** minimum, lettres et chiffres.
+- « Mot de passe oublié » d'un administrateur : ne connecte pas directement, il faut ensuite mot de passe + code SMS.
+- Nommer un nouvel administrateur exige de confirmer avec son propre mot de passe.
+- **Alerte SMS** à l'administrateur en cas d'échecs sur son compte (au plus une par heure).
+- Secours si le service SMS tombe : variable `ADMIN_2FA=off` dans Vercel (à remettre à `on` ensuite).
 - Rôle `admin` distinct, impossible à obtenir par l'inscription (champ `role` ignoré, testé).
 - Comptes créés par l'admin : mot de passe provisoire aléatoire, **changement obligatoire** à la première connexion
   (toutes les autres routes répondent 403 tant qu'il n'est pas changé).
@@ -51,7 +58,19 @@ visent à limiter qui peut voir quoi.
 - Les actions sensibles (comptes, réglages, suppression d'enfant, nouveau code enfant) sont inscrites au journal.
 - Lien de mise à jour : `https://` uniquement.
 
-## Tests d'intrusion (`backend/test/security.test.js`, 27 scénarios, OWASP API Top 10)
+## Surveillance des attaques (Administration › Sécurité)
+Sont enregistrés (90 jours, jamais de mot de passe, numéros masqués) : échecs de connexion, comptes bloqués, échecs
+et connexions administrateur, codes SMS erronés, jetons falsifiés, accès à des fonctions interdites, comptes désactivés,
+tentatives d'injection (SQL, script, traversée de répertoires, clés `$`/`__proto__`), faux avis de paiement Wave,
+limitations de débit, codes enfant erronés.
+
+L'écran analyse les dernières 24 h et affiche les **menaces** (force brute depuis une adresse, compte ciblé depuis
+plusieurs adresses, injections, faux paiements, jetons falsifiés) avec **la marche à suivre** et un bouton d'action :
+bloquer l'adresse IP (24 h, 7 jours ou définitif) ou ouvrir le compte visé. Chaque événement du journal a son conseil.
+Impossible de bloquer sa propre adresse. Les écritures du journal sont plafonnées (120 / min / instance) pour qu'un
+attaquant ne puisse pas remplir la base.
+
+## Tests d'intrusion (`backend/test/security.test.js` et `legion-security.test.js`, 34 scénarios, OWASP API Top 10)
 | Catégorie | Attaques testées | Résultat |
 |---|---|---|
 | Injection SQL | `' OR 1=1--`, `UNION SELECT`, `; DROP TABLE`, dans recherche, identifiants, légion, année, connexion, code enfant ; injection de second ordre | Bloquées (requêtes paramétrées, validation) |

@@ -5,6 +5,8 @@ import { HttpError, badRequest, notFound, parseBody } from '../errors.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { createCheckoutSession, merchantLinkUrl, verifyWaveSignature, waveMode } from '../services/wave.js';
 import { assertParentOwnsChild } from './parent.js';
+import { effectiveAmountSql } from '../services/dues.js';
+import { securityEvent } from '../services/security.js';
 
 const router = Router();
 // Ce routeur est monté avant express.json() (webhook en corps brut) : JSON activé route par route.
@@ -13,7 +15,12 @@ const payBody = z.object({ dueId: z.number().int().positive(), childId: z.number
 
 async function loadPayableDue(parentId, { dueId, childId }) {
   await assertParentOwnsChild(parentId, childId);
-  const { rows } = await query('SELECT * FROM dues WHERE id = $1', [dueId]);
+  // Montant de la légion de l'enfant (ou montant commun).
+  const { rows } = await query(
+    `SELECT d.id, d.kind, d.label, ${effectiveAmountSql('d', 'c')} AS amount
+     FROM dues d JOIN children c ON c.id = $2 WHERE d.id = $1`,
+    [dueId, childId],
+  );
   const due = rows[0];
   if (!due) throw notFound('Cotisation introuvable');
   if (!due.amount) throw badRequest("Le montant de cette cotisation n'est pas encore fixé");
@@ -57,7 +64,10 @@ router.post('/declare', json, authenticate, requireRole('parent'), async (req, r
 // Webhook Wave : corps brut nécessaire pour vérifier la signature.
 router.post('/wave/webhook', express.raw({ type: '*/*', limit: '100kb' }), async (req, res) => {
   const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '';
-  if (!verifyWaveSignature(raw, req.get('wave-signature'))) throw new HttpError(401, 'Signature invalide');
+  if (!verifyWaveSignature(raw, req.get('wave-signature'))) {
+    await securityEvent(req, 'webhook_invalid', { severity: 'critical' });
+    throw new HttpError(401, 'Signature invalide');
+  }
   let event;
   try { event = JSON.parse(raw); } catch { throw badRequest('JSON invalide'); }
   if (event.type !== 'checkout.session.completed' || event.data?.payment_status !== 'succeeded') {

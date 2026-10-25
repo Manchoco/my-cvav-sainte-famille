@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { LEGIONS } from '../domain.js';
 import { ensureYear, resolveYear } from '../services/year.js';
+import { effectiveAmountSql } from '../services/dues.js';
 
 const router = Router();
 
@@ -11,8 +12,8 @@ router.get('/', async (req, res) => {
   const [{ rows: legions }, { rows: dues }, { rows: last }, { rows: pending }, { rows: posts }] = await Promise.all([
     query('SELECT legion, count(*)::int AS n FROM children GROUP BY legion'),
     query(
-      `SELECT COALESCE(sum(COALESCE(p.amount, d.amount, 0)), 0)::int AS collected
-       FROM payments p JOIN dues d ON d.id = p.due_id WHERE d.year = $1 AND p.status = 'paid'`,
+      `SELECT COALESCE(sum(COALESCE(p.amount, ${effectiveAmountSql('d', 'c')}, 0)), 0)::int AS collected
+       FROM payments p JOIN dues d ON d.id = p.due_id JOIN children c ON c.id = p.child_id WHERE d.year = $1 AND p.status = 'paid'`,
       [year],
     ),
     query(

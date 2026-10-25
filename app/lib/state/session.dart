@@ -118,8 +118,17 @@ class Session extends ChangeNotifier {
     await _storeUser(User.fromJson(res['user'] as Map<String, dynamic>));
   }
 
-  Future<void> login(String phone, String password) async {
-    final res = await ApiClient.instance.post('/auth/login', {'phone': phone, 'password': password});
+  /// Connexion. Pour un administrateur, renvoie la vérification SMS à compléter avec [verifyLogin].
+  Future<LoginChallenge?> login(String phone, String password) async {
+    final res = await ApiClient.instance.post('/auth/login', {'phone': phone, 'password': password}) as Map<String, dynamic>;
+    if (res['twoFactorRequired'] == true) return LoginChallenge.fromJson(res);
+    await _save(res);
+    await refreshStatus();
+    return null;
+  }
+
+  Future<void> verifyLogin(String challengeId, String code) async {
+    final res = await ApiClient.instance.post('/auth/login/verify', {'challengeId': challengeId, 'code': code});
     await _save(res as Map<String, dynamic>);
     await refreshStatus();
   }
@@ -145,9 +154,13 @@ class Session extends ChangeNotifier {
 
   Future<void> requestPasswordReset(String phone) => ApiClient.instance.post('/auth/password/forgot', {'phone': phone});
 
-  Future<void> resetPassword(String phone, String code, String newPassword) async {
-    final res = await ApiClient.instance.post('/auth/password/reset', {'phone': phone, 'code': code, 'newPassword': newPassword});
-    await _save(res as Map<String, dynamic>);
+  /// Renvoie false quand une nouvelle connexion est exigée (compte administrateur).
+  Future<bool> resetPassword(String phone, String code, String newPassword) async {
+    final res = await ApiClient.instance.post('/auth/password/reset', {'phone': phone, 'code': code, 'newPassword': newPassword})
+        as Map<String, dynamic>;
+    if (res['token'] == null) return false;
+    await _save(res);
+    return true;
   }
 
   Future<void> changePassword(String current, String next) async {
@@ -172,4 +185,18 @@ class Session extends ChangeNotifier {
     await _storage.delete(key: _userKey);
     notifyListeners();
   }
+}
+
+/// Vérification par SMS d'une connexion administrateur.
+class LoginChallenge {
+  LoginChallenge({required this.id, required this.phoneHint, required this.expiresInMinutes});
+  final String id;
+  final String phoneHint;
+  final int expiresInMinutes;
+
+  factory LoginChallenge.fromJson(Map<String, dynamic> j) => LoginChallenge(
+        id: j['challengeId'] as String,
+        phoneHint: j['phoneHint'] as String? ?? '',
+        expiresInMinutes: j['expiresInMinutes'] as int? ?? 5,
+      );
 }

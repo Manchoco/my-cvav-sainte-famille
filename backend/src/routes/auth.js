@@ -10,6 +10,7 @@ import { HttpError, badRequest, parseBody } from '../errors.js';
 import { MaintenanceError, authenticate, signToken } from '../middleware/auth.js';
 import { getSettings } from '../services/settings.js';
 import { sendSms, smsProvider } from '../services/sms.js';
+import { clientIp, rateLimitHandler, securityEvent } from '../services/security.js';
 
 const router = Router();
 const MAX_FAILED = 5;
@@ -25,6 +26,7 @@ const authLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Trop de tentatives, réessayez dans quelques minutes' },
+  handler: rateLimitHandler,
 });
 
 // Par numéro visé : freine le forçage d'un compte précis, quelle que soit l'adresse de l'attaquant.
@@ -36,6 +38,7 @@ const perPhoneLimiter = rateLimit({
   skip: (req) => !normalizePhone(req.body?.phone), // numéro invalide : refusé ensuite par la validation
   keyGenerator: (req) => `phone:${normalizePhone(req.body?.phone)}`,
   message: { error: 'Trop de tentatives pour ce numéro, réessayez dans quelques minutes' },
+  handler: rateLimitHandler,
 });
 
 const phoneSchema = z.string().transform((v, ctx) => {
@@ -52,6 +55,14 @@ const registerSchema = z.object({
   legion: z.enum(LEGIONS).optional().nullable(),
   signupCode: z.string().optional(),
 });
+
+// Mot de passe administrateur : 12 caractères minimum, avec des lettres et des chiffres.
+function assertPasswordPolicy(role, password) {
+  if (role !== 'admin') return;
+  if (password.length < 12 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+    throw badRequest('Mot de passe administrateur : 12 caractères minimum, avec des lettres et des chiffres');
+  }
+}
 
 function safeEqual(a, b) {
   const ha = crypto.createHash('sha256').update(String(a)).digest();
@@ -112,20 +123,129 @@ router.post('/login', authLimiter, perPhoneLimiter, async (req, res) => {
   const ok = await bcrypt.compare(password, user?.password_hash || DUMMY_HASH);
   if (!user || !ok) {
     if (user) {
-      await query(
+      const { rows: updated } = await query(
         `UPDATE users SET failed_logins = failed_logins + 1,
            locked_until = CASE WHEN failed_logins + 1 >= $2 THEN now() + ($3 || ' minutes')::interval ELSE NULL END
-         WHERE id = $1`,
+         WHERE id = $1 RETURNING locked_until`,
         [user.id, MAX_FAILED, String(LOCK_MINUTES)],
       );
+      const isAdmin = user.role === 'admin';
+      await securityEvent(req, isAdmin ? 'admin_login_failed' : 'login_failed', {
+        severity: isAdmin ? 'critical' : 'warning', userId: user.id, phone,
+      });
+      if (updated[0]?.locked_until) {
+        await securityEvent(req, 'account_locked', { severity: isAdmin ? 'critical' : 'warning', userId: user.id, phone });
+      }
+      if (isAdmin) await alertAdmin(req, user, 'tentatives de connexion échouées sur votre compte administrateur');
+    } else {
+      await securityEvent(req, 'login_failed', { phone, details: { compte: 'inexistant' } });
     }
     throw new HttpError(401, 'Numéro ou mot de passe incorrect');
   }
-  if (user.disabled) throw new HttpError(403, "Ce compte a été désactivé. Contactez l'administrateur.");
+  if (user.disabled) {
+    await securityEvent(req, 'disabled_account', { userId: user.id, phone });
+    throw new HttpError(403, "Ce compte a été désactivé. Contactez l'administrateur.");
+  }
   await assertNotInMaintenance(user);
-  await query('UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = now() WHERE id = $1', [user.id]);
+  if (user.role === 'admin' && config.adminTwoFactor) {
+    return res.json(await startAdminChallenge(req, user));
+  }
+  await completeLogin(req, user);
   res.json({ token: signToken(user), user: publicUser(user) });
 });
+
+async function completeLogin(req, user) {
+  await query(
+    'UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = now(), last_login_ip = $2 WHERE id = $1',
+    [user.id, clientIp(req)],
+  );
+}
+
+// --- Double vérification administrateur : code à 6 chiffres envoyé par SMS ---
+
+const CHALLENGE_TTL_MINUTES = 5;
+const CHALLENGE_MAX_ATTEMPTS = 5;
+const CHALLENGE_MAX_PER_15MIN = 5;
+
+const phoneHint = (phone) => `•• •• •• ${String(phone).slice(-4, -2)} ${String(phone).slice(-2)}`;
+
+async function startAdminChallenge(req, user) {
+  if (smsProvider() === 'disabled') {
+    throw new HttpError(503, "Connexion administrateur impossible : l'envoi de SMS n'est pas configuré sur le serveur.");
+  }
+  const { rows: recent } = await query(
+    `SELECT count(*)::int AS n FROM login_challenges WHERE user_id = $1 AND created_at > now() - interval '15 minutes'`,
+    [user.id],
+  );
+  if (recent[0].n >= CHALLENGE_MAX_PER_15MIN) {
+    throw new HttpError(429, 'Trop de codes demandés. Réessayez dans 15 minutes.');
+  }
+  const id = crypto.randomBytes(24).toString('hex');
+  const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+  await query(
+    `INSERT INTO login_challenges (id, user_id, code_hash, ip, expires_at)
+     VALUES ($1, $2, $3, $4, now() + ($5 || ' minutes')::interval)`,
+    [id, user.id, hashCode('login', user.id, code), clientIp(req), String(CHALLENGE_TTL_MINUTES)],
+  );
+  try {
+    await sendSms(user.phone, `My CVAV : code de connexion administrateur ${code} (valable ${CHALLENGE_TTL_MINUTES} min). Si ce n'est pas vous, changez votre mot de passe.`);
+  } catch (err) {
+    console.error('Envoi du code administrateur échoué', err.message);
+    throw new HttpError(502, "Le SMS de vérification n'a pas pu être envoyé. Réessayez dans quelques minutes.");
+  }
+  return { twoFactorRequired: true, challengeId: id, phoneHint: phoneHint(user.phone), expiresInMinutes: CHALLENGE_TTL_MINUTES };
+}
+
+const verifySchema = z.object({
+  challengeId: z.string().regex(/^[a-f0-9]{48}$/, 'Demande invalide'),
+  code: z.string().trim().regex(/^\d{6}$/, 'Le code contient 6 chiffres'),
+});
+
+router.post('/login/verify', authLimiter, async (req, res) => {
+  const { challengeId, code } = parseBody(verifySchema, req.body);
+  const invalid = () => new HttpError(400, 'Code incorrect ou expiré. Reconnectez-vous pour recevoir un nouveau code.');
+  const { rows } = await query(
+    `SELECT c.*, u.role FROM login_challenges c JOIN users u ON u.id = c.user_id
+     WHERE c.id = $1 AND c.used_at IS NULL AND c.expires_at > now()`,
+    [challengeId],
+  );
+  const challenge = rows[0];
+  if (!challenge || challenge.attempts >= CHALLENGE_MAX_ATTEMPTS) throw invalid();
+  const expected = Buffer.from(challenge.code_hash, 'hex');
+  const given = Buffer.from(hashCode('login', challenge.user_id, code), 'hex');
+  if (!crypto.timingSafeEqual(expected, given)) {
+    await query('UPDATE login_challenges SET attempts = attempts + 1 WHERE id = $1', [challenge.id]);
+    await securityEvent(req, 'admin_2fa_failed', { severity: 'critical', userId: challenge.user_id });
+    const { rows: u } = await query('SELECT * FROM users WHERE id = $1', [challenge.user_id]);
+    if (u[0]) await alertAdmin(req, u[0], 'mot de passe administrateur correct mais code SMS erroné');
+    throw invalid();
+  }
+  // Usage unique, et seul le code le plus récent reste valable.
+  await query('UPDATE login_challenges SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [challenge.user_id]);
+  const { rows: users } = await query('SELECT * FROM users WHERE id = $1', [challenge.user_id]);
+  const user = users[0];
+  if (!user || user.disabled || user.role !== 'admin') throw invalid();
+  const newAddress = Boolean(user.last_login_ip && clientIp(req) && user.last_login_ip !== clientIp(req));
+  await completeLogin(req, user);
+  await securityEvent(req, 'admin_login', { severity: newAddress ? 'warning' : 'info', userId: user.id, details: { nouvelleAdresse: newAddress } });
+  res.json({ token: signToken(user), user: publicUser(user) });
+});
+
+// Alerte SMS à l'administrateur visé (au plus une par heure).
+async function alertAdmin(req, user, reason) {
+  try {
+    if (smsProvider() === 'disabled') return;
+    const { rows } = await query(
+      `SELECT 1 FROM security_events WHERE type = 'admin_alert_sent' AND user_id = $1 AND created_at > now() - interval '1 hour' LIMIT 1`,
+      [user.id],
+    );
+    if (rows.length) return;
+    await securityEvent(req, 'admin_alert_sent', { severity: 'info', userId: user.id, details: { raison: reason } });
+    await sendSms(user.phone, `Alerte My CVAV : ${reason}. Ouvrez Administration > Sécurité. Si ce n'est pas vous, changez votre mot de passe.`);
+  } catch (err) {
+    console.error('Alerte administrateur non envoyée', err.message);
+  }
+}
 
 router.get('/me', authenticate, (req, res) => {
   res.json({ user: publicUser(req.user) });
@@ -168,6 +288,7 @@ router.post('/password', authenticate, authLimiter, async (req, res) => {
   if (!(await bcrypt.compare(data.currentPassword, rows[0].password_hash))) {
     throw badRequest('Mot de passe actuel incorrect');
   }
+  assertPasswordPolicy(req.user.role, data.newPassword);
   const hash = await bcrypt.hash(data.newPassword, 10);
   const { rows: updated } = await query(
     `UPDATE users SET password_hash = $2, token_version = token_version + 1, must_change_password = false
@@ -190,8 +311,9 @@ const RESET_MAX_PER_HOUR = 3;
 
 // Clé dérivée (HKDF) : le secret des jetons n'est pas réutilisé tel quel pour les codes SMS.
 const RESET_KEY = Buffer.from(crypto.hkdfSync('sha256', config.jwtSecret, 'my-cvav', 'password-reset-codes', 32));
-const hashResetCode = (userId, code) =>
-  crypto.createHmac('sha256', RESET_KEY).update(`reset:${userId}:${code}`).digest('hex');
+const hashCode = (scope, userId, code) =>
+  crypto.createHmac('sha256', RESET_KEY).update(`${scope}:${userId}:${code}`).digest('hex');
+const hashResetCode = (userId, code) => hashCode('reset', userId, code);
 
 router.post('/password/forgot', authLimiter, perPhoneLimiter, async (req, res) => {
   const { phone: raw } = parseBody(z.object({ phone: z.string() }), req.body);
@@ -237,7 +359,7 @@ router.post('/password/reset', authLimiter, async (req, res) => {
   const invalid = () => new HttpError(400, 'Code incorrect ou expiré. Demandez un nouveau code.');
   if (!phone) throw invalid();
   const { rows } = await query(
-    `SELECT r.id, r.user_id, r.code_hash, r.attempts FROM password_resets r JOIN users u ON u.id = r.user_id
+    `SELECT r.id, r.user_id, r.code_hash, r.attempts, u.role FROM password_resets r JOIN users u ON u.id = r.user_id
      WHERE u.phone = $1 AND r.used_at IS NULL AND r.expires_at > now()
      ORDER BY r.created_at DESC LIMIT 1`,
     [phone],
@@ -248,8 +370,10 @@ router.post('/password/reset', authLimiter, async (req, res) => {
   const given = Buffer.from(hashResetCode(reset.user_id, data.code), 'hex');
   if (!crypto.timingSafeEqual(expected, given)) {
     await query('UPDATE password_resets SET attempts = attempts + 1 WHERE id = $1', [reset.id]);
+    await securityEvent(req, 'reset_code_failed', { severity: reset.role === 'admin' ? 'critical' : 'warning', userId: reset.user_id, phone });
     throw invalid();
   }
+  assertPasswordPolicy(reset.role, data.newPassword);
   const hash = await bcrypt.hash(data.newPassword, 10);
   const user = await withTransaction(async (client) => {
     await client.query('UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [reset.user_id]);
@@ -262,6 +386,8 @@ router.post('/password/reset', authLimiter, async (req, res) => {
     return updated[0];
   });
   if (user.disabled) throw new HttpError(403, "Ce compte a été désactivé. Contactez l'administrateur.");
+  // Administrateur : pas de connexion directe, il doit se reconnecter (mot de passe + code SMS).
+  if (user.role === 'admin' && config.adminTwoFactor) return res.json({ reset: true, loginRequired: true });
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 

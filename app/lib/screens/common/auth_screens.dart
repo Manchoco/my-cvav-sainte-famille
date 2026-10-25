@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../models.dart';
@@ -84,8 +85,15 @@ class _LoginFormState extends State<_LoginForm> {
     if (!_form.currentState!.validate()) return;
     setState(() => _busy = true);
     try {
-      await context.read<Session>().login(_phone.text, _password.text);
-      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+      final challenge = await context.read<Session>().login(_phone.text, _password.text);
+      if (!mounted) return;
+      if (challenge != null) {
+        await Navigator.push(context, MaterialPageRoute(
+          builder: (_) => TwoFactorScreen(challenge: challenge, phone: _phone.text, password: _password.text),
+        ));
+        return;
+      }
+      Navigator.of(context).popUntil((r) => r.isFirst);
     } catch (e) {
       if (mounted) showMessage(context, errorText(e), error: true);
     } finally {
@@ -253,6 +261,99 @@ class _RegisterFormState extends State<_RegisterForm> {
           ),
         ],
       ]),
+    );
+  }
+}
+
+/// Connexion administrateur : saisie du code reçu par SMS.
+class TwoFactorScreen extends StatefulWidget {
+  const TwoFactorScreen({super.key, required this.challenge, required this.phone, required this.password});
+  final LoginChallenge challenge;
+  final String phone;
+  final String password;
+
+  @override
+  State<TwoFactorScreen> createState() => _TwoFactorScreenState();
+}
+
+class _TwoFactorScreenState extends State<TwoFactorScreen> {
+  late LoginChallenge _challenge = widget.challenge;
+  final _code = TextEditingController();
+  bool _busy = false;
+
+  Future<void> _verify() async {
+    final code = _code.text.trim();
+    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+      showMessage(context, 'Le code contient 6 chiffres', error: true);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await context.read<Session>().verifyLogin(_challenge.id, code);
+      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    } catch (e) {
+      if (mounted) showMessage(context, errorText(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _resend() async {
+    setState(() => _busy = true);
+    try {
+      final next = await context.read<Session>().login(widget.phone, widget.password);
+      if (next != null && mounted) {
+        setState(() => _challenge = next);
+        _code.clear();
+        showMessage(context, 'Nouveau code envoyé');
+      }
+    } catch (e) {
+      if (mounted) showMessage(context, errorText(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Vérification')),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          const Icon(Icons.verified_user_rounded, size: 64, color: AppColors.primary),
+          const SizedBox(height: 16),
+          const Text('Compte administrateur', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          Text(
+            'Saisissez le code à 6 chiffres envoyé par SMS au ${_challenge.phoneHint.replaceAll(' ', '\u00A0')}. Il est valable ${_challenge.expiresInMinutes} minutes.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.muted),
+          ),
+          const SizedBox(height: 24),
+          TextField(
+            controller: _code,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 28, letterSpacing: 8, fontWeight: FontWeight.w800),
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            autofillHints: const [AutofillHints.oneTimeCode],
+            decoration: const InputDecoration(counterText: '', hintText: '••••••'),
+            onSubmitted: (_) => _verify(),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(onPressed: _busy ? null : _verify, child: const Text('Valider')),
+          TextButton(onPressed: _busy ? null : _resend, child: const Text('Renvoyer un code')),
+          const SizedBox(height: 16),
+          const Text(
+            "Vous n'avez rien demandé ? Quelqu'un connaît votre mot de passe : changez-le dès que possible.",
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppColors.muted, fontSize: 12),
+          ),
+        ],
+      ),
     );
   }
 }

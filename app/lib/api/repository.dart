@@ -67,6 +67,10 @@ class Repo {
 
   static Future<void> setDueAmount(int id, int? amount) => _api.put('/dues/$id', {'amount': amount});
 
+  /// Prix par légion (vide = non fixé pour cette légion).
+  static Future<void> setDueAmounts(int id, Map<Legion, int?> amounts) =>
+      _api.put('/dues/$id', {'amounts': {for (final l in Legion.values) l.name: amounts[l]}});
+
   static Future<(Due, List<PaymentEntry>)> payments(int dueId) async {
     final res = await _api.get('/dues/$dueId/payments');
     return (
@@ -111,6 +115,13 @@ class Repo {
 
   static Future<String> adminRotateSignupCode() async =>
       (await _api.post('/admin/settings/signup-code'))['signupCode'] as String;
+
+  static Future<Map<String, dynamic>> adminSecurity() async => (await _api.get('/admin/security')) as Map<String, dynamic>;
+
+  static Future<void> adminBlockIp(String ip, {int? hours, String? reason}) =>
+      _api.post('/admin/security/block', {'ip': ip, 'hours': hours, 'reason': ?reason});
+
+  static Future<void> adminUnblockIp(String ip) => _api.delete('/admin/security/block/${Uri.encodeComponent(ip)}');
 
   static Future<List<Map<String, dynamic>>> adminAudit() async =>
       ((await _api.get('/admin/audit', query: {'limit': '200'}))['entries'] as List).cast<Map<String, dynamic>>();

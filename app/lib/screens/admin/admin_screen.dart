@@ -12,25 +12,26 @@ import '../../state/session.dart';
 import '../../theme.dart';
 import '../../widgets/common.dart';
 
-/// Administration complète : comptes, maintenance et mises à jour, code d'accès responsable, journal.
+/// Administration complète : comptes, sécurité, maintenance et mises à jour, code d'accès responsable, journal.
 class AdminScreen extends StatelessWidget {
   const AdminScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Administration'),
           bottom: const TabBar(isScrollable: true, tabs: [
             Tab(icon: Icon(Icons.manage_accounts_rounded), text: 'Comptes'),
+            Tab(icon: Icon(Icons.security_rounded), text: 'Sécurité'),
             Tab(icon: Icon(Icons.construction_rounded), text: 'Maintenance'),
             Tab(icon: Icon(Icons.key_rounded), text: 'Accès'),
             Tab(icon: Icon(Icons.history_rounded), text: 'Journal'),
           ]),
         ),
-        body: const TabBarView(children: [_UsersTab(), _MaintenanceTab(), _AccessTab(), _AuditTab()]),
+        body: const TabBarView(children: [_UsersTab(), _SecurityTab(), _MaintenanceTab(), _AccessTab(), _AuditTab()]),
       ),
     );
   }
@@ -319,8 +320,12 @@ class _UserSheetState extends State<_UserSheet> {
               onSelectionChanged: _isMe
                   ? null
                   : (s) async {
-                      if (s.first == 'admin' &&
-                          !await confirm(context, title: 'Donner les droits administrateur ?', message: '${u.fullName} aura un contrôle total de l\'application.')) {
+                      if (s.first == 'admin') {
+                        final password = await _askPassword(context,
+                            title: 'Nommer ${u.fullName} administrateur ?',
+                            message: 'Cette personne aura un contrôle total de l\'application. Confirmez avec votre mot de passe.');
+                        if (password == null) return;
+                        await _update({'role': 'admin', 'confirmPassword': password});
                         return;
                       }
                       await _update({'role': s.first});
@@ -620,6 +625,9 @@ const _actionLabels = {
   'signup_code.rotate': 'Nouveau code d\'accès',
   'child.delete': 'Enfant supprimé',
   'child.regenerate_code': 'Nouveau code enfant',
+  'due.amounts': 'Prix d\'une cotisation modifiés',
+  'security.block_ip': 'Adresse IP bloquée',
+  'security.unblock_ip': 'Adresse IP débloquée',
 };
 
 class _AuditTab extends StatefulWidget {
@@ -660,6 +668,271 @@ class _AuditTabState extends State<_AuditTab> {
                   );
                 },
               ),
+      ),
+    );
+  }
+}
+
+Future<String?> _askPassword(BuildContext context, {required String title, required String message}) async {
+  final ctrl = TextEditingController();
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(title),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(message),
+        const SizedBox(height: 12),
+        TextField(controller: ctrl, obscureText: true, autofocus: true, decoration: const InputDecoration(labelText: 'Votre mot de passe')),
+      ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+        FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(0, 44)), onPressed: () => Navigator.pop(ctx, true), child: const Text('Confirmer')),
+      ],
+    ),
+  );
+  return ok == true && ctrl.text.isNotEmpty ? ctrl.text : null;
+}
+
+// ---------------- Sécurité ----------------
+
+Color _severityColor(String? s) => switch (s) { 'critical' => AppColors.danger, 'warning' => AppColors.warning, _ => AppColors.primary };
+
+class _SecurityTab extends StatefulWidget {
+  const _SecurityTab();
+  @override
+  State<_SecurityTab> createState() => _SecurityTabState();
+}
+
+class _SecurityTabState extends State<_SecurityTab> {
+  late Future<Map<String, dynamic>> _future = Repo.adminSecurity();
+
+  void _reload() => setState(() => _future = Repo.adminSecurity());
+
+  Future<void> _block(String ip) async {
+    int? hours = 24;
+    final reason = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: Text('Bloquer $ip ?'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text("Toutes les requêtes venant de cette adresse seront refusées. Plusieurs abonnés d'un même opérateur mobile "
+                'peuvent partager une adresse : préférez un blocage limité dans le temps.'),
+            const SizedBox(height: 12),
+            SegmentedButton<int?>(
+              segments: const [
+                ButtonSegment(value: 24, label: Text('24 h')),
+                ButtonSegment(value: 24 * 7, label: Text('7 jours')),
+                ButtonSegment(value: null, label: Text('Définitif')),
+              ],
+              selected: {hours},
+              onSelectionChanged: (s) => setD(() => hours = s.first),
+            ),
+            const SizedBox(height: 12),
+            TextField(controller: reason, decoration: const InputDecoration(labelText: 'Motif (facultatif)')),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+            FilledButton(
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 44), backgroundColor: AppColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Bloquer'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await Repo.adminBlockIp(ip, hours: hours, reason: reason.text.trim().isEmpty ? null : reason.text.trim());
+      if (mounted) showMessage(context, 'Adresse $ip bloquée');
+      _reload();
+    } catch (e) {
+      if (mounted) showMessage(context, errorText(e), error: true);
+    }
+  }
+
+  Future<void> _unblock(String ip) async {
+    if (!await confirm(context, title: 'Débloquer $ip ?', message: 'Les requêtes de cette adresse seront de nouveau acceptées.')) return;
+    try {
+      await Repo.adminUnblockIp(ip);
+      _reload();
+    } catch (e) {
+      if (mounted) showMessage(context, errorText(e), error: true);
+    }
+  }
+
+  Future<void> _openUser(int id) async {
+    try {
+      final users = await Repo.adminUsers();
+      final u = users.where((x) => x.id == id).firstOrNull;
+      if (u == null || !mounted) return;
+      await showModalBottomSheet<bool>(context: context, isScrollControlled: true, showDragHandle: true, builder: (_) => _UserSheet(user: u));
+      _reload();
+    } catch (e) {
+      if (mounted) showMessage(context, errorText(e), error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: () async => _reload(),
+      child: AsyncBody<Map<String, dynamic>>(
+        future: _future,
+        onRetry: _reload,
+        builder: (data) {
+          final status = data['status'] as String? ?? 'ok';
+          final threats = (data['threats'] as List? ?? const []).cast<Map<String, dynamic>>();
+          final counts = (data['counts'] as Map? ?? const {}).cast<String, dynamic>();
+          final topIps = (data['topIps'] as List? ?? const []).cast<Map<String, dynamic>>();
+          final blocked = (data['blocked'] as List? ?? const []).cast<Map<String, dynamic>>();
+          final events = (data['events'] as List? ?? const []).cast<Map<String, dynamic>>();
+          int day(String t) => ((counts[t] as Map?)?['day'] as int?) ?? 0;
+          final color = _severityColor(status == 'ok' ? null : status);
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+            children: [
+              Card(
+                color: (status == 'ok' ? AppColors.success : color).withValues(alpha: 0.12),
+                child: ListTile(
+                  leading: Icon(
+                    status == 'ok' ? Icons.verified_user_rounded : Icons.gpp_maybe_rounded,
+                    color: status == 'ok' ? AppColors.success : color,
+                    size: 36,
+                  ),
+                  title: Text(
+                    status == 'ok' ? 'Aucune menace détectée' : status == 'critical' ? 'Menace sérieuse détectée' : 'Activité suspecte',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(status == 'ok'
+                      ? 'Analyse des dernières 24 heures. Tirez vers le bas pour actualiser.'
+                      : '${threats.length} point(s) à traiter ci-dessous, avec la marche à suivre.'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                StatusPill(label: '${day('login_failed') + day('admin_login_failed')} échec(s) de connexion', color: AppColors.warning),
+                StatusPill(label: '${day('suspicious_input')} injection(s)', color: AppColors.danger),
+                StatusPill(label: '${day('invalid_token')} jeton(s) falsifié(s)', color: AppColors.danger),
+                StatusPill(label: '${day('forbidden')} accès interdit(s)', color: AppColors.warning),
+                StatusPill(label: '${day('rate_limited')} limitation(s)', color: AppColors.primary),
+                StatusPill(label: '${day('admin_login')} connexion(s) admin', color: AppColors.primary),
+              ]),
+              for (final t in threats) ...[
+                const SizedBox(height: 12),
+                Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    side: BorderSide(color: _severityColor(t['level'] as String?), width: 1.5),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(children: [
+                        Icon(Icons.warning_amber_rounded, color: _severityColor(t['level'] as String?)),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text('${t['title']}', style: const TextStyle(fontWeight: FontWeight.w800))),
+                      ]),
+                      const SizedBox(height: 6),
+                      Text('${t['detail']}'),
+                      const SizedBox(height: 8),
+                      Text('Que faire : ${t['remedy']}', style: const TextStyle(color: AppColors.muted)),
+                      if (t['action'] is Map) ...[
+                        const SizedBox(height: 10),
+                        Builder(builder: (_) {
+                          final a = (t['action'] as Map).cast<String, dynamic>();
+                          return a['type'] == 'block_ip'
+                              ? FilledButton.icon(
+                                  style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+                                  onPressed: () => _block(a['ip'] as String),
+                                  icon: const Icon(Icons.block_rounded),
+                                  label: Text('Bloquer ${a['ip']}'),
+                                )
+                              : FilledButton.tonalIcon(
+                                  onPressed: () => _openUser(a['userId'] as int),
+                                  icon: const Icon(Icons.manage_accounts_rounded),
+                                  label: const Text('Ouvrir le compte'),
+                                );
+                        }),
+                      ],
+                    ]),
+                  ),
+                ),
+              ],
+              if (blocked.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                const Text('Adresses bloquées', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                for (final b in blocked)
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.block_rounded, color: AppColors.danger),
+                      title: Text('${b['ip']}'),
+                      subtitle: Text([
+                        if (b['reason'] != null) '${b['reason']}',
+                        b['expiresAt'] == null ? 'Définitif' : 'Jusqu\'au ${formatDate(b['expiresAt'] as String?, pattern: 'd MMM HH:mm')}',
+                      ].join(' · ')),
+                      trailing: TextButton(onPressed: () => _unblock(b['ip'] as String), child: const Text('Débloquer')),
+                    ),
+                  ),
+              ],
+              if (topIps.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                const Text('Adresses les plus actives (24 h)', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                for (final ip in topIps)
+                  Card(
+                    child: ListTile(
+                      leading: Icon(Icons.public_rounded, color: (ip['critical'] as int? ?? 0) > 0 ? AppColors.danger : AppColors.muted),
+                      title: Text('${ip['ip']}'),
+                      subtitle: Text('${ip['count']} événement(s)${(ip['critical'] as int? ?? 0) > 0 ? ' dont ${ip['critical']} grave(s)' : ''}'),
+                      trailing: ip['blocked'] == true
+                          ? const StatusPill(label: 'Bloquée', color: AppColors.danger)
+                          : ip['mine'] == true
+                              ? const StatusPill(label: 'Votre adresse', color: AppColors.primary)
+                              : TextButton(onPressed: () => _block(ip['ip'] as String), child: const Text('Bloquer')),
+                    ),
+                  ),
+              ],
+              const SizedBox(height: 20),
+              const Text('Journal de sécurité', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+              const Text('Touchez un événement pour voir la conduite à tenir.', style: TextStyle(color: AppColors.muted)),
+              const SizedBox(height: 8),
+              if (events.isEmpty) const EmptyState(icon: Icons.shield_rounded, title: 'Aucun événement'),
+              for (final e in events)
+                Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: ExpansionTile(
+                    leading: Icon(Icons.circle, size: 14, color: _severityColor(e['severity'] as String?)),
+                    title: Text('${e['label']}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                    subtitle: Text([
+                      formatDate(e['createdAt'] as String?, pattern: 'd MMM HH:mm'),
+                      if (e['ip'] != null) '${e['ip']}',
+                      if (e['user'] != null) '${e['user']}',
+                    ].join(' · ')),
+                    childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (e['advice'] != null) Text('Que faire : ${e['advice']}'),
+                      if (e['path'] != null) Text('Adresse appelée : ${e['path']}', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+                      if (e['phone'] != null) Text('Numéro visé : ${e['phone']}', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+                      if (e['details'] is Map && (e['details'] as Map)['extrait'] != null)
+                        Text('Extrait : ${(e['details'] as Map)['extrait']}', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+                      if (e['ip'] != null && e['ip'] != data['viewerIp'] && e['type'] != 'admin_login' && !blocked.any((b) => b['ip'] == e['ip']))
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: () => _block(e['ip'] as String),
+                            icon: const Icon(Icons.block_rounded, color: AppColors.danger),
+                            label: const Text('Bloquer cette adresse'),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
   }

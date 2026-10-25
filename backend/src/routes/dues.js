@@ -5,16 +5,21 @@ import { LEGIONS } from '../domain.js';
 import { badRequest, notFound, parseBody, parseId } from '../errors.js';
 import { childDto } from '../services/children.js';
 import { ensureYear, resolveYear } from '../services/year.js';
+import { amountsByLegion, effectiveAmountSql, legionAmountsSql, saveDueAmounts, uniformAmount } from '../services/dues.js';
+import { audit } from '../services/audit.js';
 
 const router = Router();
 
 export function dueDto(r) {
+  const amounts = amountsByLegion(r.amount, r.legion_amounts);
   return {
     id: r.id,
     kind: r.kind,
     year: r.year,
     label: r.label,
-    amount: r.amount,
+    // Montant unique (même prix pour toutes les légions) ou null si les prix diffèrent.
+    amount: uniformAmount(amounts),
+    amounts,
     eventId: r.event_id,
     eventDate: r.event_date ?? null,
     paidCount: r.paid_count != null ? Number(r.paid_count) : undefined,
@@ -24,10 +29,11 @@ export function dueDto(r) {
 }
 
 const DUE_SELECT = `
-  SELECT d.*, e.event_date, e.position,
+  SELECT d.*, e.event_date, e.position, ${legionAmountsSql('d')} AS legion_amounts,
     (SELECT count(*) FROM payments p WHERE p.due_id = d.id AND p.status = 'paid') AS paid_count,
     (SELECT count(*) FROM payments p WHERE p.due_id = d.id AND p.status = 'pending') AS pending_count,
-    (SELECT COALESCE(sum(COALESCE(p.amount, d.amount, 0)), 0) FROM payments p WHERE p.due_id = d.id AND p.status = 'paid') AS collected
+    (SELECT COALESCE(sum(COALESCE(p.amount, ${effectiveAmountSql('d', 'c')}, 0)), 0)
+       FROM payments p JOIN children c ON c.id = p.child_id WHERE p.due_id = d.id AND p.status = 'paid') AS collected
   FROM dues d LEFT JOIN events e ON e.id = d.event_id`;
 
 router.get('/', async (req, res) => {
@@ -42,10 +48,25 @@ router.get('/', async (req, res) => {
   res.json({ year, childrenCount: count[0].n, dues: rows.map(dueDto) });
 });
 
+const amountValue = z.number().int().min(0).max(10_000_000).nullable();
+const amountsSchema = z.union([
+  // Ancien format (application < 1.2) : un seul montant pour toutes les légions.
+  z.object({ amount: amountValue }).strict(),
+  z.object({ amounts: z.object(Object.fromEntries(LEGIONS.map((l) => [l, amountValue]))).strict() }).strict(),
+]);
+
+// Prix d'une cotisation, légion par légion.
 router.put('/:id', async (req, res) => {
-  const { amount } = parseBody(z.object({ amount: z.number().int().min(0).max(10_000_000).nullable() }), req.body);
-  const { rows } = await query('UPDATE dues SET amount = $2 WHERE id = $1 RETURNING *', [parseId(req.params.id), amount]);
-  if (!rows[0]) throw notFound('Cotisation introuvable');
+  const id = parseId(req.params.id);
+  const data = parseBody(amountsSchema, req.body);
+  const amounts = 'amounts' in data ? data.amounts : Object.fromEntries(LEGIONS.map((l) => [l, data.amount]));
+  await withTransaction(async (client) => {
+    const { rowCount } = await client.query('SELECT 1 FROM dues WHERE id = $1 FOR UPDATE', [id]);
+    if (!rowCount) throw notFound('Cotisation introuvable');
+    await saveDueAmounts(client, id, amounts, req.user.id);
+  });
+  await audit(req, 'due.amounts', `due:${id}`, amounts);
+  const { rows } = await query(`${DUE_SELECT} WHERE d.id = $1`, [id]);
   res.json({ due: dueDto(rows[0]) });
 });
 
@@ -61,8 +82,10 @@ router.get('/:id/payments', async (req, res) => {
     filter = 'WHERE c.legion = $2';
   }
   const { rows } = await query(
-    `SELECT c.*, p.status, p.method, p.reference, p.updated_at AS paid_at, u.full_name AS updated_by_name
+    `SELECT c.*, p.status, p.method, p.reference, p.amount AS paid_amount, p.updated_at AS paid_at, u.full_name AS updated_by_name,
+       ${effectiveAmountSql('d', 'c')} AS due_amount
      FROM children c
+     JOIN dues d ON d.id = $1
      LEFT JOIN payments p ON p.child_id = c.id AND p.due_id = $1
      LEFT JOIN users u ON u.id = p.updated_by
      ${filter}
@@ -74,6 +97,7 @@ router.get('/:id/payments', async (req, res) => {
     entries: rows.map((r) => ({
       child: childDto(r),
       status: r.status ?? 'unpaid',
+      amount: r.paid_amount ?? r.due_amount ?? null,
       method: r.method ?? null,
       reference: r.reference ?? null,
       updatedAt: r.paid_at ?? null,
@@ -97,10 +121,11 @@ router.put('/:id/payments', async (req, res) => {
       if (paid) {
         await client.query(
           `INSERT INTO payments (due_id, child_id, status, method, amount, updated_by)
-           SELECT $1, c.id, 'paid', 'manuel', $3, $4 FROM children c WHERE c.id = $2
+           SELECT d.id, c.id, 'paid', 'manuel', ${effectiveAmountSql('d', 'c')}, $3
+           FROM children c JOIN dues d ON d.id = $1 WHERE c.id = $2
            ON CONFLICT (due_id, child_id) DO UPDATE SET status = 'paid', updated_by = EXCLUDED.updated_by, updated_at = now(),
              amount = COALESCE(payments.amount, EXCLUDED.amount)`,
-          [id, childId, due[0].amount, req.user.id],
+          [id, childId, req.user.id],
         );
       } else {
         await client.query(`DELETE FROM payments WHERE due_id = $1 AND child_id = $2 AND method <> 'wave'`, [id, childId]);

@@ -4,8 +4,12 @@ import { config } from './config.js';
 // Les colonnes DATE sont renvoyées telles quelles ("2026-10-24") pour éviter les décalages de fuseau.
 pg.types.setTypeParser(1082, (v) => v);
 
+// sslmode=require est déjà traité comme verify-full (certificat vérifié) : on l'écrit explicitement
+// pour garder ce niveau de sécurité quand la bibliothèque pg changera de comportement.
+const connectionString = config.databaseUrl.replace(/([?&])sslmode=(prefer|require|verify-ca)\b/, '$1sslmode=verify-full');
+
 export const pool = new pg.Pool({
-  connectionString: config.databaseUrl,
+  connectionString,
   ssl: config.databaseSsl ? { rejectUnauthorized: false } : undefined,
   // En fonction serverless (Vercel), peu de connexions par instance : la base Neon utilise son pooler.
   max: process.env.VERCEL ? 3 : 10,
