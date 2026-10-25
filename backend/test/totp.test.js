@@ -93,10 +93,15 @@ test('codes de secours : chacun ne sert qu’une fois, faux codes refusés et jo
 });
 
 test("force brute : les demandes de vérification sont limitées, même avec l'application", async () => {
-  await pool.query('DELETE FROM login_challenges');
-  for (let i = 0; i < 10; i += 1) assert.equal((await api.post('/api/auth/login').send({ phone: '0100000000', password: PASSWORD })).status, 200);
+  // 10 demandes récentes en base (y compris par l'application, sur d'autres instances du serveur) : la suivante est refusée.
+  await pool.query(
+    `INSERT INTO login_challenges (id, user_id, code_hash, expires_at, method)
+     SELECT md5(random()::text) || md5(random()::text), id, '', now() + interval '5 minutes', 'totp'
+     FROM users, generate_series(1, 10) WHERE phone = '0100000000'`,
+  );
   const blocked = await api.post('/api/auth/login').send({ phone: '0100000000', password: PASSWORD });
   assert.equal(blocked.status, 429);
+  assert.match(blocked.body.error, /demandes de vérification/);
   assert.equal(blocked.body.challengeId, undefined);
   await pool.query('DELETE FROM login_challenges');
 });
