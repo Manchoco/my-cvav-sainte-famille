@@ -176,6 +176,14 @@ const CHALLENGE_MAX_PER_15MIN = 10;
 const phoneHint = (phone) => `•• •• •• ${String(phone).slice(-4, -2)} ${String(phone).slice(-2)}`;
 
 async function startAdminChallenge(req, user) {
+  // Limite commune à toutes les méthodes : sans elle, des demandes répétées permettraient d'essayer tous les codes.
+  const { rows: recent } = await query(
+    `SELECT count(*)::int AS n FROM login_challenges WHERE user_id = $1 AND created_at > now() - interval '15 minutes'`,
+    [user.id],
+  );
+  if (recent[0].n >= CHALLENGE_MAX_PER_15MIN) {
+    throw new HttpError(429, 'Trop de demandes de vérification. Réessayez dans 15 minutes.');
+  }
   // Application d'authentification configurée : aucun SMS, le code est lu dans l'application.
   if (user.totp_enabled && user.totp_secret) {
     const id = crypto.randomBytes(24).toString('hex');
@@ -188,13 +196,6 @@ async function startAdminChallenge(req, user) {
   }
   if (smsProvider() === 'disabled') {
     throw new HttpError(503, "Connexion administrateur impossible : l'envoi de SMS n'est pas configuré sur le serveur.");
-  }
-  const { rows: recent } = await query(
-    `SELECT count(*)::int AS n FROM login_challenges WHERE user_id = $1 AND created_at > now() - interval '15 minutes'`,
-    [user.id],
-  );
-  if (recent[0].n >= CHALLENGE_MAX_PER_15MIN) {
-    throw new HttpError(429, 'Trop de codes demandés. Réessayez dans 15 minutes.');
   }
   const id = crypto.randomBytes(24).toString('hex');
   const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');

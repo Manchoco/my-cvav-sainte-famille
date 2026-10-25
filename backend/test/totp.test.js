@@ -92,6 +92,15 @@ test('codes de secours : chacun ne sert qu’une fois, faux codes refusés et jo
   assert.ok(types.includes('admin_2fa_failed'));
 });
 
+test("force brute : les demandes de vérification sont limitées, même avec l'application", async () => {
+  await pool.query('DELETE FROM login_challenges');
+  for (let i = 0; i < 10; i += 1) assert.equal((await api.post('/api/auth/login').send({ phone: '0100000000', password: PASSWORD })).status, 200);
+  const blocked = await api.post('/api/auth/login').send({ phone: '0100000000', password: PASSWORD });
+  assert.equal(blocked.status, 429);
+  assert.equal(blocked.body.challengeId, undefined);
+  await pool.query('DELETE FROM login_challenges');
+});
+
 test('régénérer les codes de secours, puis désactiver : retour au SMS ; réservé aux administrateurs', async () => {
   const regen = await api.post('/api/auth/totp/recovery-codes').set(admin).send({ currentPassword: PASSWORD });
   assert.equal(regen.status, 200);
