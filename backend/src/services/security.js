@@ -22,8 +22,20 @@ export const EVENT_TYPES = {
     advice: "Si ce n'est pas vous : changez immédiatement votre mot de passe (Profil) et bloquez l'adresse IP. La vérification par SMS empêche l'accès sans votre téléphone.",
   },
   admin_2fa_failed: {
-    label: 'Code SMS administrateur incorrect',
-    advice: "Le mot de passe administrateur a été saisi correctement mais pas le code SMS : si ce n'est pas vous, votre mot de passe est connu. Changez-le tout de suite.",
+    label: 'Code de vérification administrateur incorrect',
+    advice: "Le mot de passe administrateur a été saisi correctement mais pas le code de vérification : si ce n'est pas vous, votre mot de passe est connu. Changez-le tout de suite.",
+  },
+  recovery_code_used: {
+    label: 'Code de secours administrateur utilisé',
+    advice: "Normal si vous avez perdu l'accès à votre application d'authentification. Sinon, vos codes de secours sont connus : régénérez-les (Profil) et changez votre mot de passe.",
+  },
+  totp_enabled: {
+    label: "Application d'authentification activée",
+    advice: "Vérifiez que c'est bien vous qui l'avez activée. Sinon, changez immédiatement votre mot de passe.",
+  },
+  totp_disabled: {
+    label: "Application d'authentification désactivée",
+    advice: "La connexion administrateur repasse au code SMS. Si ce n'est pas vous, changez votre mot de passe et réactivez l'application.",
   },
   admin_login: {
     label: 'Connexion administrateur',

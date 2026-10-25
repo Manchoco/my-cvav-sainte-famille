@@ -47,13 +47,16 @@ String formatDate(String? iso, {String pattern = 'd MMM yyyy'}) {
 }
 
 class User {
-  User({required this.id, required this.role, required this.fullName, required this.phone, this.legion, this.mustChangePassword = false});
+  User({required this.id, required this.role, required this.fullName, required this.phone, this.legion, this.mustChangePassword = false,
+      this.totpEnabled = false});
   final int id;
   final String role;
   final String fullName;
   final String phone;
   final Legion? legion;
   final bool mustChangePassword;
+  /// Double vérification par application d'authentification activée (administrateurs).
+  final bool totpEnabled;
 
   bool get isAdmin => role == 'admin';
   /// Responsable ou administrateur (l'administrateur a tous les droits d'un responsable).
@@ -67,11 +70,12 @@ class User {
         phone: j['phone'] as String,
         legion: Legion.fromId(j['legion'] as String?),
         mustChangePassword: j['mustChangePassword'] as bool? ?? false,
+        totpEnabled: j['totpEnabled'] as bool? ?? false,
       );
 
   Map<String, dynamic> toJson() => {
         'id': id, 'role': role, 'fullName': fullName, 'phone': phone, 'legion': legion?.name,
-        'mustChangePassword': mustChangePassword,
+        'mustChangePassword': mustChangePassword, 'totpEnabled': totpEnabled,
       };
 }
 

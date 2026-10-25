@@ -5,6 +5,7 @@ import '../../config.dart';
 import '../../state/session.dart';
 import '../../theme.dart';
 import '../../widgets/common.dart';
+import 'totp_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key, this.embedded = false});
@@ -59,6 +60,16 @@ class ProfileScreen extends StatelessWidget {
               trailing: const Icon(Icons.chevron_right_rounded),
               onTap: () => _changePassword(context),
             ),
+            if (user.isAdmin) ...[
+              const Divider(height: 1),
+              ListTile(
+                leading: Icon(Icons.phonelink_lock_rounded, color: user.totpEnabled ? AppColors.success : AppColors.warning),
+                title: const Text('Application d\'authentification'),
+                subtitle: Text(user.totpEnabled ? 'Activée : connexion sans SMS' : 'Non activée : recommandé pour l\'administrateur'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TotpScreen())),
+              ),
+            ],
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.info_outline_rounded),

@@ -163,6 +163,29 @@ class Session extends ChangeNotifier {
     return true;
   }
 
+  // --- Application d'authentification (administrateur) ---
+
+  Future<({String secret, String uri})> totpSetup(String password) async {
+    final res = await ApiClient.instance.post('/auth/totp/setup', {'currentPassword': password});
+    return (secret: res['secret'] as String, uri: res['uri'] as String);
+  }
+
+  Future<List<String>> totpEnable(String code) async {
+    final res = await ApiClient.instance.post('/auth/totp/enable', {'code': code});
+    await refreshProfile();
+    return (res['recoveryCodes'] as List).cast<String>();
+  }
+
+  Future<List<String>> totpRegenerateCodes(String password) async {
+    final res = await ApiClient.instance.post('/auth/totp/recovery-codes', {'currentPassword': password});
+    return (res['recoveryCodes'] as List).cast<String>();
+  }
+
+  Future<void> totpDisable(String password) async {
+    await ApiClient.instance.post('/auth/totp/disable', {'currentPassword': password});
+    await refreshProfile();
+  }
+
   Future<void> changePassword(String current, String next) async {
     final res = await ApiClient.instance.post('/auth/password', {'currentPassword': current, 'newPassword': next});
     await _save(res as Map<String, dynamic>);
@@ -189,8 +212,11 @@ class Session extends ChangeNotifier {
 
 /// Vérification par SMS d'une connexion administrateur.
 class LoginChallenge {
-  LoginChallenge({required this.id, required this.phoneHint, required this.expiresInMinutes});
+  LoginChallenge({required this.id, required this.phoneHint, required this.expiresInMinutes, this.method = 'sms'});
   final String id;
+  /// 'sms' ou 'totp' (application d'authentification).
+  final String method;
+  bool get usesApp => method == 'totp';
   final String phoneHint;
   final int expiresInMinutes;
 
@@ -198,5 +224,6 @@ class LoginChallenge {
         id: j['challengeId'] as String,
         phoneHint: j['phoneHint'] as String? ?? '',
         expiresInMinutes: j['expiresInMinutes'] as int? ?? 5,
+        method: j['method'] as String? ?? 'sms',
       );
 }

@@ -11,6 +11,10 @@ import { MaintenanceError, authenticate, signToken } from '../middleware/auth.js
 import { getSettings } from '../services/settings.js';
 import { sendSms, smsProvider } from '../services/sms.js';
 import { clientIp, rateLimitHandler, securityEvent } from '../services/security.js';
+import { audit } from '../services/audit.js';
+import {
+  consumeRecoveryCode, decryptSecret, encryptSecret, generateRecoveryCodes, generateSecret, isRecoveryFormat, otpauthUri, verifyTotp,
+} from '../services/totp.js';
 
 const router = Router();
 const MAX_FAILED = 5;
@@ -74,6 +78,7 @@ export function publicUser(u) {
   return {
     id: u.id, role: u.role, fullName: u.full_name, phone: u.phone, legion: u.legion,
     mustChangePassword: Boolean(u.must_change_password),
+    totpEnabled: Boolean(u.totp_enabled),
   };
 }
 
@@ -165,11 +170,22 @@ async function completeLogin(req, user) {
 
 const CHALLENGE_TTL_MINUTES = 5;
 const CHALLENGE_MAX_ATTEMPTS = 5;
-const CHALLENGE_MAX_PER_15MIN = 5;
+// Toutes méthodes confondues : au plus 10 demandes × 5 essais par quart d'heure, et seulement avec le bon mot de passe.
+const CHALLENGE_MAX_PER_15MIN = 10;
 
 const phoneHint = (phone) => `•• •• •• ${String(phone).slice(-4, -2)} ${String(phone).slice(-2)}`;
 
 async function startAdminChallenge(req, user) {
+  // Application d'authentification configurée : aucun SMS, le code est lu dans l'application.
+  if (user.totp_enabled && user.totp_secret) {
+    const id = crypto.randomBytes(24).toString('hex');
+    await query(
+      `INSERT INTO login_challenges (id, user_id, code_hash, ip, expires_at, method)
+       VALUES ($1, $2, '', $3, now() + ($4 || ' minutes')::interval, 'totp')`,
+      [id, user.id, clientIp(req), String(CHALLENGE_TTL_MINUTES)],
+    );
+    return { twoFactorRequired: true, challengeId: id, method: 'totp', expiresInMinutes: CHALLENGE_TTL_MINUTES };
+  }
   if (smsProvider() === 'disabled') {
     throw new HttpError(503, "Connexion administrateur impossible : l'envoi de SMS n'est pas configuré sur le serveur.");
   }
@@ -193,12 +209,13 @@ async function startAdminChallenge(req, user) {
     console.error('Envoi du code administrateur échoué', err.message);
     throw new HttpError(502, "Le SMS de vérification n'a pas pu être envoyé. Réessayez dans quelques minutes.");
   }
-  return { twoFactorRequired: true, challengeId: id, phoneHint: phoneHint(user.phone), expiresInMinutes: CHALLENGE_TTL_MINUTES };
+  return { twoFactorRequired: true, challengeId: id, method: 'sms', phoneHint: phoneHint(user.phone), expiresInMinutes: CHALLENGE_TTL_MINUTES };
 }
 
 const verifySchema = z.object({
   challengeId: z.string().regex(/^[a-f0-9]{48}$/, 'Demande invalide'),
-  code: z.string().trim().regex(/^\d{6}$/, 'Le code contient 6 chiffres'),
+  // 6 chiffres (SMS ou application) ou code de secours « XXXX-XXXX ».
+  code: z.string().trim().min(6, 'Code trop court').max(20),
 });
 
 router.post('/login/verify', authLimiter, async (req, res) => {
@@ -211,13 +228,12 @@ router.post('/login/verify', authLimiter, async (req, res) => {
   );
   const challenge = rows[0];
   if (!challenge || challenge.attempts >= CHALLENGE_MAX_ATTEMPTS) throw invalid();
-  const expected = Buffer.from(challenge.code_hash, 'hex');
-  const given = Buffer.from(hashCode('login', challenge.user_id, code), 'hex');
-  if (!crypto.timingSafeEqual(expected, given)) {
+  const ok = challenge.method === 'totp' ? await checkTotpOrRecovery(req, challenge.user_id, code) : checkSmsCode(challenge, code);
+  if (!ok) {
     await query('UPDATE login_challenges SET attempts = attempts + 1 WHERE id = $1', [challenge.id]);
-    await securityEvent(req, 'admin_2fa_failed', { severity: 'critical', userId: challenge.user_id });
+    await securityEvent(req, 'admin_2fa_failed', { severity: 'critical', userId: challenge.user_id, details: { methode: challenge.method } });
     const { rows: u } = await query('SELECT * FROM users WHERE id = $1', [challenge.user_id]);
-    if (u[0]) await alertAdmin(req, u[0], 'mot de passe administrateur correct mais code SMS erroné');
+    if (u[0]) await alertAdmin(req, u[0], 'mot de passe administrateur correct mais code de vérification erroné');
     throw invalid();
   }
   // Usage unique, et seul le code le plus récent reste valable.
@@ -229,6 +245,100 @@ router.post('/login/verify', authLimiter, async (req, res) => {
   await completeLogin(req, user);
   await securityEvent(req, 'admin_login', { severity: newAddress ? 'warning' : 'info', userId: user.id, details: { nouvelleAdresse: newAddress } });
   res.json({ token: signToken(user), user: publicUser(user) });
+});
+
+function checkSmsCode(challenge, code) {
+  if (!/^\d{6}$/.test(code)) return false;
+  const expected = Buffer.from(challenge.code_hash, 'hex');
+  const given = Buffer.from(hashCode('login', challenge.user_id, code), 'hex');
+  return expected.length === given.length && crypto.timingSafeEqual(expected, given);
+}
+
+// Code de l'application d'authentification (sans rejeu) ou code de secours (usage unique).
+async function checkTotpOrRecovery(req, userId, code) {
+  const { rows } = await query('SELECT totp_secret, totp_last_step, recovery_codes FROM users WHERE id = $1 AND totp_enabled', [userId]);
+  const u = rows[0];
+  if (!u?.totp_secret) return false;
+  if (/^\d{6}$/.test(code)) {
+    const step = verifyTotp(decryptSecret(u.totp_secret), code, u.totp_last_step);
+    if (step == null) return false;
+    // Mise à jour conditionnelle : deux requêtes simultanées avec le même code ne passent pas toutes les deux.
+    const { rowCount } = await query(
+      'UPDATE users SET totp_last_step = $2 WHERE id = $1 AND (totp_last_step IS NULL OR totp_last_step < $2)',
+      [userId, step],
+    );
+    return rowCount === 1;
+  }
+  if (!isRecoveryFormat(code)) return false;
+  const remaining = consumeRecoveryCode(u.recovery_codes, code);
+  if (!remaining) return false;
+  const { rowCount } = await query(
+    'UPDATE users SET recovery_codes = $2 WHERE id = $1 AND recovery_codes = $3',
+    [userId, JSON.stringify(remaining), JSON.stringify(u.recovery_codes)],
+  );
+  if (rowCount === 1) {
+    await securityEvent(req, 'recovery_code_used', { severity: 'warning', userId, details: { restants: remaining.length } });
+  }
+  return rowCount === 1;
+}
+
+// --- Application d'authentification (administrateur) ---
+
+const passwordConfirmSchema = z.object({ currentPassword: z.string().min(1, 'Mot de passe actuel requis').max(128) });
+
+async function assertAdminWithPassword(req) {
+  if (req.user.role !== 'admin') throw new HttpError(403, 'Réservé aux administrateurs');
+  const { currentPassword } = parseBody(passwordConfirmSchema, req.body);
+  const { rows } = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+  if (!(await bcrypt.compare(currentPassword, rows[0].password_hash))) throw badRequest('Mot de passe actuel incorrect');
+}
+
+// 1) Nouveau secret (en attente tant qu'un premier code n'a pas été validé).
+router.post('/totp/setup', authenticate, authLimiter, async (req, res) => {
+  await assertAdminWithPassword(req);
+  const secret = generateSecret();
+  await query('UPDATE users SET totp_pending_secret = $2 WHERE id = $1', [req.user.id, encryptSecret(secret)]);
+  res.json({ secret, uri: otpauthUri(secret, req.user.full_name || req.user.phone) });
+});
+
+// 2) Premier code de l'application : la double vérification passe à l'application, codes de secours fournis.
+router.post('/totp/enable', authenticate, authLimiter, async (req, res) => {
+  if (req.user.role !== 'admin') throw new HttpError(403, 'Réservé aux administrateurs');
+  const { code } = parseBody(z.object({ code: z.string().trim().regex(/^\d{6}$/, 'Le code contient 6 chiffres') }), req.body);
+  const { rows } = await query('SELECT totp_pending_secret FROM users WHERE id = $1', [req.user.id]);
+  if (!rows[0]?.totp_pending_secret) throw badRequest("Recommencez la configuration de l'application");
+  const pending = rows[0].totp_pending_secret;
+  const step = verifyTotp(decryptSecret(pending), code);
+  if (step == null) throw badRequest("Code incorrect. Vérifiez l'heure du téléphone (réglage automatique) et réessayez.");
+  const { codes, hashes } = generateRecoveryCodes();
+  await query(
+    `UPDATE users SET totp_secret = $2, totp_pending_secret = NULL, totp_enabled = true, totp_last_step = $3, recovery_codes = $4
+     WHERE id = $1`,
+    [req.user.id, pending, step, JSON.stringify(hashes)],
+  );
+  await audit(req, 'totp.enable', `user:${req.user.id}`);
+  await securityEvent(req, 'totp_enabled', { severity: 'warning', userId: req.user.id });
+  res.json({ enabled: true, recoveryCodes: codes });
+});
+
+router.post('/totp/disable', authenticate, authLimiter, async (req, res) => {
+  await assertAdminWithPassword(req);
+  await query(
+    'UPDATE users SET totp_secret = NULL, totp_pending_secret = NULL, totp_enabled = false, totp_last_step = NULL, recovery_codes = NULL WHERE id = $1',
+    [req.user.id],
+  );
+  await audit(req, 'totp.disable', `user:${req.user.id}`);
+  await securityEvent(req, 'totp_disabled', { severity: 'critical', userId: req.user.id });
+  res.json({ enabled: false });
+});
+
+router.post('/totp/recovery-codes', authenticate, authLimiter, async (req, res) => {
+  await assertAdminWithPassword(req);
+  if (!req.user.totp_enabled) throw badRequest("Activez d'abord l'application d'authentification");
+  const { codes, hashes } = generateRecoveryCodes();
+  await query('UPDATE users SET recovery_codes = $2 WHERE id = $1', [req.user.id, JSON.stringify(hashes)]);
+  await audit(req, 'totp.recovery_codes', `user:${req.user.id}`);
+  res.json({ recoveryCodes: codes });
 });
 
 // Alerte SMS à l'administrateur visé (au plus une par heure).

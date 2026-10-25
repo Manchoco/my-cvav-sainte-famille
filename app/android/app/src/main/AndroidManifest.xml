@@ -52,5 +52,10 @@
             <data android:scheme="tel" />
         </intent>
         <package android:name="com.wave.personal" />
+        <!-- Ajout du compte dans l'application d'authentification (Google / Microsoft Authenticator) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="otpauth" />
+        </intent>
     </queries>
 </manifest>

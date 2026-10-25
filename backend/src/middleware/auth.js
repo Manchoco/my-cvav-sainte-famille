@@ -40,7 +40,7 @@ export async function authenticate(req, _res, next) {
     const id = Number(payload.sub);
     if (!Number.isInteger(id)) throw new HttpError(401, 'Session expirée, veuillez vous reconnecter');
     const { rows } = await query(
-      `SELECT id, role, full_name, phone, legion, token_version, disabled, must_change_password
+      `SELECT id, role, full_name, phone, legion, token_version, disabled, must_change_password, totp_enabled
        FROM users WHERE id = $1`,
       [id],
     );

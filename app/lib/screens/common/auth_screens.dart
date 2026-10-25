@@ -280,11 +280,13 @@ class _TwoFactorScreenState extends State<TwoFactorScreen> {
   late LoginChallenge _challenge = widget.challenge;
   final _code = TextEditingController();
   bool _busy = false;
+  bool _recovery = false;
 
   Future<void> _verify() async {
     final code = _code.text.trim();
-    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
-      showMessage(context, 'Le code contient 6 chiffres', error: true);
+    final valid = _recovery ? RegExp(r'^[A-Za-z0-9]{4}-?[A-Za-z0-9]{4}$').hasMatch(code) : RegExp(r'^\d{6}$').hasMatch(code);
+    if (!valid) {
+      showMessage(context, _recovery ? 'Code de secours : 8 caractères (ex. ABCD-EF23)' : 'Le code contient 6 chiffres', error: true);
       return;
     }
     setState(() => _busy = true);
@@ -305,7 +307,7 @@ class _TwoFactorScreenState extends State<TwoFactorScreen> {
       if (next != null && mounted) {
         setState(() => _challenge = next);
         _code.clear();
-        showMessage(context, 'Nouveau code envoyé');
+        showMessage(context, next.usesApp ? 'Nouvelle demande créée' : 'Nouveau code envoyé');
       }
     } catch (e) {
       if (mounted) showMessage(context, errorText(e), error: true);
@@ -316,36 +318,54 @@ class _TwoFactorScreenState extends State<TwoFactorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final app = _challenge.usesApp;
+    final hint = _challenge.phoneHint.replaceAll(' ', ' ');
     return Scaffold(
       appBar: AppBar(title: const Text('Vérification')),
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: [
-          const Icon(Icons.verified_user_rounded, size: 64, color: AppColors.primary),
+          Icon(app ? Icons.phonelink_lock_rounded : Icons.verified_user_rounded, size: 64, color: AppColors.primary),
           const SizedBox(height: 16),
           const Text('Compte administrateur', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
           const SizedBox(height: 8),
           Text(
-            'Saisissez le code à 6 chiffres envoyé par SMS au ${_challenge.phoneHint.replaceAll(' ', '\u00A0')}. Il est valable ${_challenge.expiresInMinutes} minutes.',
+            _recovery
+                ? 'Saisissez un de vos codes de secours (chaque code ne sert qu\'une fois).'
+                : app
+                    ? 'Ouvrez votre application d\'authentification (Google Authenticator…) et saisissez le code à 6 chiffres affiché pour « My CVAV ».'
+                    : 'Saisissez le code à 6 chiffres envoyé par SMS au $hint. Il est valable ${_challenge.expiresInMinutes} minutes.',
             textAlign: TextAlign.center,
             style: const TextStyle(color: AppColors.muted),
           ),
           const SizedBox(height: 24),
           TextField(
+            key: ValueKey(_recovery),
             controller: _code,
             autofocus: true,
-            keyboardType: TextInputType.number,
-            maxLength: 6,
+            keyboardType: _recovery ? TextInputType.text : TextInputType.number,
+            textCapitalization: TextCapitalization.characters,
+            maxLength: _recovery ? 9 : 6,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 28, letterSpacing: 8, fontWeight: FontWeight.w800),
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            style: const TextStyle(fontSize: 28, letterSpacing: 6, fontWeight: FontWeight.w800),
+            inputFormatters: [if (!_recovery) FilteringTextInputFormatter.digitsOnly],
             autofillHints: const [AutofillHints.oneTimeCode],
-            decoration: const InputDecoration(counterText: '', hintText: '••••••'),
+            decoration: InputDecoration(counterText: '', hintText: _recovery ? 'XXXX-XXXX' : '••••••'),
             onSubmitted: (_) => _verify(),
           ),
           const SizedBox(height: 16),
           FilledButton(onPressed: _busy ? null : _verify, child: const Text('Valider')),
-          TextButton(onPressed: _busy ? null : _resend, child: const Text('Renvoyer un code')),
+          if (!app) TextButton(onPressed: _busy ? null : _resend, child: const Text('Renvoyer un code')),
+          if (app)
+            TextButton(
+              onPressed: _busy
+                  ? null
+                  : () => setState(() {
+                        _recovery = !_recovery;
+                        _code.clear();
+                      }),
+              child: Text(_recovery ? 'Utiliser l\'application d\'authentification' : 'Téléphone perdu ? Utiliser un code de secours'),
+            ),
           const SizedBox(height: 16),
           const Text(
             "Vous n'avez rien demandé ? Quelqu'un connaît votre mot de passe : changez-le dès que possible.",

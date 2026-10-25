@@ -52,6 +52,7 @@ alerte si l'on quitte sans enregistrer.
 | `src/services/audit.js` | Journal des actions sensibles |
 | `src/services/security.js` | Surveillance : événements suspects, détection d'injections, blocage d'IP, analyse des menaces |
 | `src/services/dues.js` | Prix des cotisations par légion |
+| `src/services/totp.js` | Codes d'application d'authentification (RFC 6238), chiffrement du secret, codes de secours |
 | `src/create-admin.js` | `npm run create-admin` : crée/réinitialise un administrateur |
 | `src/services/year.js` | Année pastorale (sept.→août), création des cotisations et activités par défaut |
 
@@ -89,7 +90,9 @@ Toutes les routes sont préfixées par `/api`. 🔒R = responsable (ou admin), �
 | GET | `/health`, `/meta` | public | État, année en cours, légions, mode de paiement |
 | POST | `/auth/register` | public | Création de compte (code d'accès requis pour un responsable) |
 | POST | `/auth/login` | public | Connexion par téléphone + mot de passe (admin : renvoie `twoFactorRequired` + `challengeId`) |
-| POST | `/auth/login/verify` | public | Administrateur : code SMS à 6 chiffres → session (12 h) |
+| POST | `/auth/login/verify` | public | Administrateur : code (application, SMS ou code de secours) → session (12 h) |
+| POST | `/auth/totp/setup`, `/auth/totp/enable` | 🔒A | Configurer l'application d'authentification (renvoie 8 codes de secours) |
+| POST | `/auth/totp/disable`, `/auth/totp/recovery-codes` | 🔒A | Désactiver / nouveaux codes de secours (mot de passe exigé) |
 | GET/PUT | `/auth/me` | 🔒 | Profil / modifier nom et téléphone (mot de passe actuel requis) |
 | POST | `/auth/password`, `/auth/logout-all` | 🔒 | Changer le mot de passe / déconnecter tous les appareils |
 | POST | `/auth/password/forgot` | public | Envoie un code SMS (réponse identique si le numéro est inconnu) |

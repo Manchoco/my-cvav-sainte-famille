@@ -43,13 +43,17 @@ visent à limiter qui peut voir quoi.
 - Mode lien marchand : le parent ne peut que **déclarer** (« à confirmer ») ; un responsable valide.
 
 ## Administration et maintenance
-- **Double vérification** : après le mot de passe, un code à 6 chiffres est envoyé par SMS au numéro de l'administrateur
-  (5 min, usage unique, 5 essais, 5 codes / 15 min). Sans le téléphone, pas d'accès, même avec le mot de passe.
+- **Double vérification** : après le mot de passe, un code à 6 chiffres est exigé. De préférence lu dans une
+  **application d'authentification** (Google / Microsoft Authenticator, norme TOTP : sans réseau ni SMS, secret
+  chiffré en base AES-256-GCM, code non réutilisable) avec **8 codes de secours** à usage unique en cas de perte du
+  téléphone (Profil › Application d'authentification). À défaut, le code est envoyé par SMS au numéro de l'administrateur
+  (5 min, usage unique, 5 essais par code, 10 demandes / 15 min). Sans le téléphone, pas d'accès, même avec le mot de passe.
 - Session administrateur limitée à **12 h** ; mot de passe administrateur : **12 caractères** minimum, lettres et chiffres.
 - « Mot de passe oublié » d'un administrateur : ne connecte pas directement, il faut ensuite mot de passe + code SMS.
 - Nommer un nouvel administrateur exige de confirmer avec son propre mot de passe.
 - **Alerte SMS** à l'administrateur en cas d'échecs sur son compte (au plus une par heure).
-- Secours si le service SMS tombe : variable `ADMIN_2FA=off` dans Vercel (à remettre à `on` ensuite).
+- Secours (SMS en panne et application non configurée) : variable `ADMIN_2FA=off` dans Vercel puis redéploiement ;
+  remettre `on` ensuite. Attention : changer `JWT_SECRET` rend illisibles les secrets d'application (à reconfigurer).
 - Rôle `admin` distinct, impossible à obtenir par l'inscription (champ `role` ignoré, testé).
 - Comptes créés par l'admin : mot de passe provisoire aléatoire, **changement obligatoire** à la première connexion
   (toutes les autres routes répondent 403 tant qu'il n'est pas changé).
